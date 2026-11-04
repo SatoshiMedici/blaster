@@ -27,6 +27,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Build web app
+        run: pnpm --filter @blast-agents/web build
 
   move:
     name: Move (build, test, custody check)

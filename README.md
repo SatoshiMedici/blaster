@@ -24,7 +24,7 @@ Users keep custody: the agent can trade, but it can never withdraw. The only oth
 
 ```text
 apps/
-  web/                 Next.js app: onboarding, dashboard, leaderboard      (SPEC §13 step 7, not started)
+  web/                 Next.js app: landing, Start flow, dashboard, leaderboard (step 7, UI built)
   api/                 REST + WebSocket API with wallet sign-in             (step 6, not started)
 packages/
   shared/              Pure, browser-safe: pricing, model catalog, activity levels, referrals,
