@@ -1,16 +1,16 @@
 # `blast_agent_vault`
 
-A per-user Sui Move vault that lets an AI agent trade [Blast](https://blast.fun) launches for its owner. **The agent can trade, but it can never withdraw.**
+A per-user Sui Move vault that lets an AI agent trade [Blast](https://blast.fun) launches for its owner. **The agent can trade, but it can never withdraw.** The one other way SUI ever leaves the vault is the capped daily fee, paid only to the treasury the owner approved (SPEC §1b).
 
-Implements [SPEC §5](../../SPEC.md#5-move-package-blast_agent_vault). Not published. It needs an external audit before real users (SPEC §10).
+Implements [SPEC §1b and §5](../../SPEC.md#5-move-package-blast_agent_vault). Not published. It needs an external audit before real users (SPEC §10).
 
 ## Objects
 
 | Object | Abilities | Held by | Can do |
 | --- | --- | --- | --- |
-| `AgentVault` | `key` (shared) | — | Holds `Balance<SUI>`, a `Bag` of `Balance<Meme>`, the limits and the spend accounting |
-| `OwnerCap` | `key, store` | the user's wallet | deposit, withdraw, set limits, pause, resume, revoke, re-authorize |
-| `TradeCap` | `key, store` | the operator key (KMS) | `buy`, `sell`, nothing else |
+| `AgentVault` | `key` (shared) | — | Holds `Balance<SUI>`, a `Bag` of `Balance<Meme>`, the limits, the spend accounting and the fee terms (`daily_fee_cap`, `treasury`, `last_fee_day`) |
+| `OwnerCap` | `key, store` | the user's wallet | deposit, withdraw, set limits, set fee terms, pause, resume, revoke, re-authorize |
+| `TradeCap` | `key, store` | the operator key (KMS) | `buy`, `sell`, and `charge_fee` once a day; nothing else |
 | `Limits` | `copy, drop, store` | inside the vault | `max_trade`, `max_per_launch`, `max_daily_spend` (MIST), `max_open_positions`, `min_out_required` |
 
 ## Guarantees
@@ -18,6 +18,7 @@ Implements [SPEC §5](../../SPEC.md#5-move-package-blast_agent_vault). Not publi
 | Guarantee | How it is enforced | Test |
 | --- | --- | --- |
 | The agent cannot move funds out | No public function that takes a `TradeCap` returns a `Coin`, `Balance` or capability. `buy` and `sell` only move value between `vault.sui` and `vault.tokens` through a Blast curve. | `round_trip_keeps_all_value_in_the_vault`, plus [`check_trade_cap_surface.py`](../../scripts/check_trade_cap_surface.py) in CI |
+| The fee is the only other outflow, and it is bounded | `charge_fee` pays at most `daily_fee_cap`, at most once per calendar day, only to `vault.treasury`, never during the free period, while paused or after revoke. It never sells tokens to pay. The CI guard allows this one transfer, in its reviewed form, and no other transfer anywhere outside owner functions. | the 16 fee tests in `tests/vault_tests.move` |
 | The owner can always withdraw | Owner functions check only `cap.vault_id`. They ignore `paused`, the agent state and the limits. | `owner_withdraws_while_paused_and_after_revoke`, `owner_withdraws_after_every_agent_limit_is_exhausted` |
 | Withdrawals go to the OwnerCap holder | `withdraw_*` return the `Coin` to the caller, who must hold the `OwnerCap` | `withdrawn_coin_goes_to_the_owner_cap_holder`, `owner_cap_of_another_vault_cannot_withdraw` |
 | Revoke is instant and on-chain | `revoke_agent` sets `trade_cap_id = none`; every agent call checks `trade_cap_id == some(cap.id)` | `revoked_trade_cap_cannot_buy`, `revoked_trade_cap_cannot_sell`, `replaced_trade_cap_stops_working` |
@@ -38,6 +39,14 @@ buy<Meme>(vault, trade_cap, launch, package_version, runtime_config, amount, min
 
 The split lets the unit tests run every limit and every accounting path against the real checks, with a simulated curve. A dependent package cannot build a real `Launch` in unit tests, because Blast's `#[test_only]` constructors aren't visible to it. Calling the real curve is covered by a mainnet dev-inspect (SPEC §13 step 2; see [docs/PROGRESS.md](../../docs/PROGRESS.md)).
 
+## Daily fee (SPEC §1b)
+
+- `create(limits, daily_fee_cap, treasury, free_days, coin, operator, clock)` is the one-signature Start call. The user approves the fee cap, the treasury and the free period in the same signature that creates the vault.
+- `last_fee_day` is the last calendar day already paid for or covered by the free period. `create` sets it to `today + free_days − 1`, so with `free_days = 7` the creation day and the six days after it are free.
+- `charge_fee(vault, trade_cap, amount, clock)` needs `today > last_fee_day`, `0 < amount ≤ daily_fee_cap`, an authorized and unpaused agent, and enough SUI. It then sets `last_fee_day = today` and pays `vault.treasury`. Skipped days are never back-charged.
+- `set_fee_terms(vault, owner_cap, daily_fee_cap, treasury)` is the owner re-approving new terms. Setting the cap to `0` turns the fee off.
+- If the vault holds too little SUI, the charge aborts. The operator then stops the agent and tells the user to top up or withdraw (off-chain).
+
 ## Limits accounting
 
 - **Per trade:** `amount ≤ max_trade`.
@@ -49,17 +58,17 @@ The split lets the unit tests run every limit and every accounting path against 
 
 ## API
 
-Owner (`&OwnerCap`): `create`, `deposit_sui`, `deposit_token<T>`, `withdraw_sui`, `withdraw_all_sui`, `withdraw_token<T>`, `withdraw_all_token<T>`, `set_limits`, `pause`, `resume`, `revoke_agent`, `authorize_agent`.
+Owner (`&OwnerCap`): `create`, `deposit_sui`, `deposit_token<T>`, `withdraw_sui`, `withdraw_all_sui`, `withdraw_token<T>`, `withdraw_all_token<T>`, `set_limits`, `set_fee_terms`, `pause`, `resume`, `revoke_agent`, `authorize_agent`.
 
-Agent (`&TradeCap`): `buy<Meme>`, `sell<Meme>`. Anyone holding a TradeCap can also call `destroy_trade_cap`.
+Agent (`&TradeCap`): `buy<Meme>`, `sell<Meme>`, `charge_fee`. Anyone holding a TradeCap can also call `destroy_trade_cap`.
 
 Constructor: `new_limits(max_trade, max_per_launch, max_daily_spend, max_open_positions, min_out_required)`. It aborts with `EInvalidLimits` unless `min_out_required` is `true`.
 
-Read-only getters: `sui_value`, `token_value<T>`, `position_cost<T>`, `open_positions`, `spent_today`, `day_index`, `limits`, `is_paused`, `trade_cap_id`, `owner`, plus the `Limits` field getters.
+Read-only getters: `sui_value`, `token_value<T>`, `position_cost<T>`, `open_positions`, `spent_today`, `day_index`, `limits`, `is_paused`, `trade_cap_id`, `owner`, `daily_fee_cap`, `treasury`, `last_fee_day`, plus the `Limits` field getters.
 
 ### Events
 
-`VaultCreated`, `Deposited`, `Withdrawn`, `LimitsChanged`, `Paused`, `Resumed`, `AgentAuthorized`, `AgentRevoked`, `AgentTraded { vault_id, meme_type, side (0 buy, 1 sell), sui_amount (net), meme_amount, min_out }`.
+`VaultCreated` (includes the fee terms and `first_fee_day`), `Deposited`, `Withdrawn`, `LimitsChanged`, `Paused`, `Resumed`, `AgentAuthorized`, `AgentRevoked`, `FeeTermsChanged`, `FeeCharged { vault_id, amount, day, treasury }`, `AgentTraded { vault_id, meme_type, side (0 buy, 1 sell), sui_amount (net), meme_amount, min_out }`.
 
 ### Abort codes
 
@@ -79,6 +88,8 @@ Read-only getters: `sui_value`, `token_value<T>`, `position_cost<T>`, `open_posi
 | 11 | `EInvalidLimits` | `min_out_required` is false |
 | 12 | `EOutputBelowMin` | Trade returned less than `min_out` |
 | 13 | `ESuiIsNotAToken` | `deposit_token<SUI>`: use `deposit_sui` |
+| 14 | `EFeeNotDue` | Today's fee was already charged, or today is in the free period |
+| 15 | `EExceedsDailyFeeCap` | Fee above `daily_fee_cap` |
 
 ## Differences from the SPEC
 
@@ -86,6 +97,8 @@ Read-only getters: `sui_value`, `token_value<T>`, `position_cost<T>`, `open_posi
 - `high_water_value_hint` is left out. The drawdown stop is off-chain, and an unused on-chain field would be misleading.
 - `withdraw_all_sui` and `withdraw_all_token<T>` were added, so a user can empty the vault from a block explorer or CLI without our backend, even without knowing the exact balances.
 - `destroy_trade_cap` was added, so the operator can clean up caps that were replaced.
+- `create` takes a `free_days` argument, so the 7 free days of SPEC §1b are enforced on-chain through the initial `last_fee_day`. It needs no extra field.
+- `charge_fee` takes `ctx` (for the coin it creates).
 
 ## Build and test
 

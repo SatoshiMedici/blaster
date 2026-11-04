@@ -1,4 +1,4 @@
-import type { OnChainLimits } from "@blast-agents/shared";
+import type { FeeTerms, OnChainLimits } from "@blast-agents/shared";
 import { SUI_TYPE } from "@blast-agents/shared";
 import type { Transaction, TransactionObjectArgument } from "@mysten/sui/transactions";
 import { normalizeStructTag } from "@mysten/sui/utils";
@@ -55,16 +55,22 @@ export class VaultTransactions {
   // === Owner (user signs) ===
 
   /**
-   * Creates the vault funded from the gas coin, sends the TradeCap to `operator` and the
-   * OwnerCap to `owner`. This is the onboarding PTB from SPEC 3.1 step 6.
+   * The one-signature "Start" PTB (SPEC 1b): creates the vault, deposits from the gas coin, writes
+   * the limits and the fee terms, sends the TradeCap to `operator` and the OwnerCap to `owner`.
    */
-  create(tx: Transaction, args: { limits: OnChainLimits; depositMist: bigint; operator: string; owner: string }) {
+  create(
+    tx: Transaction,
+    args: { limits: OnChainLimits; fees: FeeTerms; depositMist: bigint; operator: string; owner: string },
+  ) {
     if (args.depositMist <= 0n) throw new Error("deposit must be positive");
     const [deposit] = tx.splitCoins(tx.gas, [tx.pure.u64(args.depositMist)]);
     const ownerCap = tx.moveCall({
       target: this.#target("create"),
       arguments: [
         this.limits(tx, args.limits),
+        tx.pure.u64(args.fees.dailyFeeCapMist),
+        tx.pure.address(args.fees.treasury),
+        tx.pure.u64(args.fees.freeDays),
         deposit as TransactionObjectArgument,
         tx.pure.address(args.operator),
         tx.object.clock(),
@@ -142,6 +148,22 @@ export class VaultTransactions {
     });
   }
 
+  /** Changes the fee terms. The user re-approves any fee change by signing this (SPEC 1b). */
+  setFeeTerms(
+    tx: Transaction,
+    args: { vault: SharedObject; ownerCap: ObjectInput; dailyFeeCapMist: bigint | string; treasury: string },
+  ) {
+    return tx.moveCall({
+      target: this.#target("set_fee_terms"),
+      arguments: [
+        this.#shared(tx, args.vault, true),
+        this.#obj(tx, args.ownerCap),
+        tx.pure.u64(args.dailyFeeCapMist),
+        tx.pure.address(args.treasury),
+      ],
+    });
+  }
+
   pause(tx: Transaction, args: { vault: SharedObject; ownerCap: ObjectInput }) {
     return this.#ownerOnly(tx, "pause", args);
   }
@@ -213,6 +235,20 @@ export class VaultTransactions {
         this.#shared(tx, this.#blast.runtimeConfig, false),
         tx.pure.u64(args.amountMist),
         tx.pure.u64(args.minMemeOut),
+        tx.object.clock(),
+      ],
+    });
+  }
+
+  /** `vault::charge_fee`: the once-a-day fee, paid by the contract to the vault's own treasury. */
+  chargeFee(tx: Transaction, args: { vault: SharedObject; tradeCap: ObjectInput; amountMist: bigint }) {
+    if (args.amountMist <= 0n) throw new Error("fee must be positive");
+    return tx.moveCall({
+      target: this.#target("charge_fee"),
+      arguments: [
+        this.#shared(tx, args.vault, true),
+        this.#obj(tx, args.tradeCap),
+        tx.pure.u64(args.amountMist),
         tx.object.clock(),
       ],
     });

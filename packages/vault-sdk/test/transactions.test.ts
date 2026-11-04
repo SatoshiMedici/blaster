@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { RISK_PRESETS, settingsToLimits, suiToMist } from "@blast-agents/shared";
+import { DEFAULT_FREE_DAYS, type FeeTerms, RISK_PRESETS, settingsToLimits, suiToMist } from "@blast-agents/shared";
 import { Transaction } from "@mysten/sui/transactions";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,6 +8,7 @@ import {
   decodeVault,
   describeCreate,
   effectiveSpentToday,
+  isFeeDue,
   MAINNET_BLAST_OBJECTS,
   typeNameToCoinType,
   VaultTransactions,
@@ -21,7 +22,13 @@ const TRADE_CAP = `0x${"e".repeat(64)}`;
 const USER = `0x${"1".repeat(64)}`;
 const OPERATOR = `0x${"2".repeat(64)}`;
 const MEME = `0x${"3".repeat(64)}::meme::MEME`;
+const TREASURY = `0x${"4".repeat(64)}`;
 const limits = settingsToLimits(RISK_PRESETS.balanced.settings, suiToMist(100));
+const fees: FeeTerms = {
+  dailyFeeCapMist: suiToMist("0.2").toString(),
+  treasury: TREASURY,
+  freeDays: DEFAULT_FREE_DAYS,
+};
 
 const vt = new VaultTransactions(PKG);
 
@@ -35,15 +42,19 @@ const sharedInputs = (data: Data) =>
 describe("VaultTransactions.create", () => {
   it("splits the deposit, creates the vault and sends the OwnerCap to the user", () => {
     const tx = new Transaction();
-    vt.create(tx, { limits, depositMist: suiToMist(100), operator: OPERATOR, owner: USER });
+    vt.create(tx, { limits, fees, depositMist: suiToMist(100), operator: OPERATOR, owner: USER });
     const data = tx.getData();
     expect(kinds(data)).toEqual(["SplitCoins", "MoveCall", "MoveCall", "TransferObjects"]);
     expect(calls(data)).toEqual(["vault::new_limits", "vault::create"]);
     for (const c of data.commands) if (c.MoveCall) expect(c.MoveCall.package).toBe(PKG.packageId);
+    // limits, daily_fee_cap, treasury, free_days, coin, operator, clock
+    expect(data.commands[2]?.MoveCall?.arguments).toHaveLength(7);
   });
 
   it("rejects a zero deposit", () => {
-    expect(() => vt.create(new Transaction(), { limits, depositMist: 0n, operator: OPERATOR, owner: USER })).toThrow();
+    expect(() =>
+      vt.create(new Transaction(), { limits, fees, depositMist: 0n, operator: OPERATOR, owner: USER }),
+    ).toThrow();
   });
 });
 
@@ -69,6 +80,14 @@ describe("agent calls", () => {
     expect(tx.getData().commands[0]?.MoveCall?.arguments).toHaveLength(7);
   });
 
+  it("chargeFee passes the vault, the TradeCap, the amount and the clock", () => {
+    const tx = new Transaction();
+    vt.chargeFee(tx, { vault: VAULT, tradeCap: TRADE_CAP, amountMist: 1n });
+    expect(calls(tx.getData())).toEqual(["vault::charge_fee"]);
+    expect(tx.getData().commands[0]?.MoveCall?.arguments).toHaveLength(4);
+    expect(() => vt.chargeFee(new Transaction(), { vault: VAULT, tradeCap: TRADE_CAP, amountMist: 0n })).toThrow();
+  });
+
   it("refuses trades without slippage protection", () => {
     const base = { vault: VAULT, tradeCap: TRADE_CAP, launch: LAUNCH, memeType: MEME };
     expect(() => vt.buy(new Transaction(), { ...base, amountMist: 5n, minMemeOut: 0n })).toThrow();
@@ -85,6 +104,12 @@ describe("owner calls", () => {
       "vault::withdraw_all_token",
       "vault::withdraw_all_sui",
     ]);
+  });
+
+  it("setFeeTerms is an owner call", () => {
+    const tx = new Transaction();
+    vt.setFeeTerms(tx, { vault: VAULT, ownerCap: OWNER_CAP, dailyFeeCapMist: 1n, treasury: TREASURY });
+    expect(calls(tx.getData())).toEqual(["vault::set_fee_terms"]);
   });
 
   it("withdrawSui with an amount uses withdraw_sui and transfers to the recipient", () => {
@@ -147,11 +172,16 @@ describe("BCS layout", () => {
       spent_today: 5n,
       position_cost: { id: OWNER_CAP, size: 1n },
       open_positions: 1n,
+      daily_fee_cap: 200_000_000n,
+      treasury: TREASURY,
+      last_fee_day: 20_006n,
     };
     const decoded = decodeVault(AgentVaultBcs.serialize(value).toBytes());
     expect(decoded.trade_cap_id).toBe(TRADE_CAP);
     expect(decoded.limits.max_open_positions).toBe("4");
     expect(decoded.sui).toBe("100");
+    expect(decoded.treasury).toBe(TREASURY);
+    expect(decoded.last_fee_day).toBe("20006");
   });
 });
 
@@ -166,8 +196,15 @@ describe("helpers", () => {
     expect(effectiveSpentToday({ dayIndex: day, spentTodayMist: 9n }, Number(day + 1n) * 86_400_000)).toBe(0n);
   });
 
-  it("describeCreate states custody, limits and risk in plain words", () => {
-    const lines = describeCreate({ limits, depositMist: suiToMist(100), operator: OPERATOR }).join("\n");
+  it("a fee is due only after the last paid or free day", () => {
+    const day = 20_006n;
+    expect(isFeeDue({ lastFeeDay: day }, Number(day) * 86_400_000 + 86_399_999)).toBe(false);
+    expect(isFeeDue({ lastFeeDay: day }, Number(day + 1n) * 86_400_000)).toBe(true);
+  });
+
+  it("describeCreate states custody, limits, fee and risk in plain words", () => {
+    const lines = describeCreate({ limits, fees, depositMist: suiToMist(100), operator: OPERATOR }).join("\n");
+    expect(lines).toContain("up to 0.200 SUI per day while the agent is running, free for the first 7 days");
     expect(lines).toContain("100.000 SUI");
     expect(lines).toContain("It cannot withdraw.");
     expect(lines).toContain("5.000 SUI per trade");

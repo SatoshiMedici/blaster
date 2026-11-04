@@ -33,6 +33,9 @@ export type RiskSettings = z.infer<typeof RiskSettings>;
 export const PRESET_IDS = ["careful", "balanced", "degen"] as const;
 export type PresetId = (typeof PRESET_IDS)[number];
 
+/** The risk slider starts here (SPEC 1b). */
+export const DEFAULT_PRESET: PresetId = "balanced";
+
 export const RISK_PRESETS: Record<PresetId, { label: string; settings: RiskSettings }> = {
   careful: {
     label: "Careful",

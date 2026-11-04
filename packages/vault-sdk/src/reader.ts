@@ -18,6 +18,11 @@ export type VaultState = {
   dayIndex: bigint;
   spentTodayMist: bigint;
   openPositions: number;
+  /** Most the operator may charge per calendar day (SPEC 1b). */
+  dailyFeeCapMist: bigint;
+  treasury: string;
+  /** Last day paid for or covered by the free period; a fee is due on any later day. */
+  lastFeeDay: bigint;
 };
 
 /** TypeName strings have no `0x` prefix; normalize to the usual `0x…::m::T` form. */
@@ -74,10 +79,20 @@ export async function readVault(client: ClientWithCoreApi, vaultId: string): Pro
     dayIndex: BigInt(v.day_index),
     spentTodayMist: BigInt(v.spent_today),
     openPositions: Number(v.open_positions),
+    dailyFeeCapMist: BigInt(v.daily_fee_cap),
+    treasury: v.treasury,
+    lastFeeDay: BigInt(v.last_fee_day),
   };
+}
+
+const dayOf = (nowMs: number) => BigInt(Math.floor(nowMs / 86_400_000));
+
+/** Whether `charge_fee` would accept a charge today (ignoring pause, revoke and balance). */
+export function isFeeDue(state: Pick<VaultState, "lastFeeDay">, nowMs = Date.now()) {
+  return dayOf(nowMs) > state.lastFeeDay;
 }
 
 /** Today's spend as the contract will see it: zero once the day has rolled. */
 export function effectiveSpentToday(state: Pick<VaultState, "dayIndex" | "spentTodayMist">, nowMs = Date.now()) {
-  return BigInt(Math.floor(nowMs / 86_400_000)) === state.dayIndex ? state.spentTodayMist : 0n;
+  return dayOf(nowMs) === state.dayIndex ? state.spentTodayMist : 0n;
 }

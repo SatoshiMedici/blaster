@@ -13,6 +13,10 @@ export const AuthVerifyBody = z.object({
   signature: z.string().min(1),
 });
 
+/**
+ * Body of `POST /vaults/prepare` (the Start screen). Fee terms are not in the body: the server sets
+ * them from config and returns them with the PTB, so the user approves exactly what is signed.
+ */
 export const PrepareVaultBody = z.object({
   model: z.string(),
   preset: z.enum(PRESET_IDS),

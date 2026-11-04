@@ -1,6 +1,6 @@
 # Blast Agents
 
-An AI agent (Claude or ChatGPT) trades [Blast](https://blast.fun) launches on Sui **from the user's own on-chain vault**. Users keep custody: the agent can trade, but it can never withdraw. Limits are enforced on-chain, and the user can pause, revoke or withdraw at any time, even if our backend is down.
+An AI agent (Claude or ChatGPT) trades [Blast](https://blast.fun) launches on Sui **from the user's own on-chain vault**. Users keep custody: the agent can trade, but it can never withdraw. The only other outflow is a capped flat daily fee, approved by the user and paid on-chain to a fixed treasury. Limits are enforced on-chain, and the user can pause, revoke or withdraw at any time, even if our backend is down.
 
 > **Status: early build, nothing deployed.** The Move vault is implemented and unit-tested but not published or audited. No mainnet transaction has been signed. See [docs/PROGRESS.md](docs/PROGRESS.md).
 >
@@ -27,10 +27,10 @@ packages/
   agent-core/          Market snapshot, model adapters, risk check, executor (from blast-arena-agent)
   vault-sdk/           TypeScript PTB builders and readers for the vault      (step 3)
 move/
-  blast_agent_vault/   The Sui Move vault: OwnerCap / TradeCap, on-chain limits, 39 unit tests
+  blast_agent_vault/   The Sui Move vault: OwnerCap / TradeCap, on-chain limits and daily fee, 55 unit tests
   vendor/blast/        Blast launchpad source at the canonical mainnet commit (read-only)
 scripts/
-  check_trade_cap_surface.py   CI custody guard: no TradeCap function may return value
+  check_trade_cap_surface.py   CI custody guard: no TradeCap function may return value; the fee is the only outflow
 ```
 
 Each package has its own README.

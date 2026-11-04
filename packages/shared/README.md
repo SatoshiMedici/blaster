@@ -2,13 +2,14 @@
 
 Types, zod schemas and pure helpers shared by the web app, the API and the workers. It has no Sui or network dependencies, so it's safe in the browser.
 
-| Module        | Contents                                                                                                                                                                        |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `limits.ts`   | `OnChainLimits` (mirrors the Move `Limits`, MIST as strings), `RiskSettings`, `RISK_PRESETS` (Careful / Balanced / Degen, SPEC §3.1), `settingsToLimits(settings, depositMist)` |
-| `decision.ts` | `VaultAction`, `Decision` and the strict `DECISION_JSON_SCHEMA` given to every model. Vaults only allow `buy` and `sell`; `join_opening_round` is rejected (SPEC §5.4.1).       |
-| `models.ts`   | `ModelOption`, `DEFAULT_MODELS` (model IDs come from config, SPEC §6.1)                                                                                                         |
-| `api.ts`      | Request schemas for the API in SPEC §7                                                                                                                                          |
-| `units.ts`    | `suiToMist` (exact decimal parsing), `mistToSui`, `formatSui`, `SUI_TYPE`                                                                                                       |
+| Module        | Contents                                                                                                                                                                                                                          |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `limits.ts`   | `OnChainLimits` (mirrors the Move `Limits`, MIST as strings), `RiskSettings`, `RISK_PRESETS` (Careful / Balanced / Degen, SPEC §3.1), `settingsToLimits(settings, depositMist)`, `DEFAULT_PRESET` (the slider starts on Balanced) |
+| `decision.ts` | `VaultAction`, `Decision` and the strict `DECISION_JSON_SCHEMA` given to every model. Vaults only allow `buy` and `sell`; `join_opening_round` is rejected (SPEC §5.4.1).                                                         |
+| `fees.ts`     | `FeeTerms` (daily fee cap, treasury, free days) and `DEFAULT_FREE_DAYS = 7` (SPEC §1b)                                                                                                                                            |
+| `models.ts`   | `ModelOption`, `DEFAULT_MODELS` (model IDs come from config, SPEC §6.1)                                                                                                                                                           |
+| `api.ts`      | Request schemas for the API in SPEC §7                                                                                                                                                                                            |
+| `units.ts`    | `suiToMist` (exact decimal parsing), `mistToSui`, `formatSui`, `SUI_TYPE`                                                                                                                                                         |
 
 ```ts
 import { RISK_PRESETS, settingsToLimits, suiToMist } from "@blast-agents/shared";

@@ -16,20 +16,29 @@ public struct MEME_C has drop {}
 const USER: address = @0xA11CE;
 const OPERATOR: address = @0x0BE;
 const STRANGER: address = @0xBAD;
+const TREASURY: address = @0x7EA;
 
 const ONE: u64 = 1_000_000_000;
 const DAY_MS: u64 = 86_400_000;
+const FEE_CAP: u64 = 200_000_000; // 0.2 SUI a day
+const FREE_DAYS: u64 = 7;
 
 // Limits used by most tests: 5 / 15 / 30 ONE, 2 open positions.
 fun default_limits(): Limits { vault::new_limits(5 * ONE, 15 * ONE, 30 * ONE, 2, true) }
 
 /// Creates a vault funded with `deposit` SUI. Leaves the scenario at a fresh tx from USER.
-fun setup(deposit: u64): (Scenario, Clock) {
+fun setup(deposit: u64): (Scenario, Clock) { setup_with_free_days(deposit, FREE_DAYS) }
+
+/// Vault created on day 10 with the given free period.
+fun setup_with_free_days(deposit: u64, free_days: u64): (Scenario, Clock) {
     let mut scenario = ts::begin(USER);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(10 * DAY_MS);
     let owner_cap = vault::create(
         default_limits(),
+        FEE_CAP,
+        TREASURY,
+        free_days,
         coin::mint_for_testing<SUI>(deposit, scenario.ctx()),
         OPERATOR,
         &clock,
@@ -414,6 +423,9 @@ fun trade_cap_of_another_vault_aborts() {
     scenario.next_tx(STRANGER);
     let other_owner = vault::create(
         default_limits(),
+        FEE_CAP,
+        TREASURY,
+        FREE_DAYS,
         coin::mint_for_testing<SUI>(100 * ONE, scenario.ctx()),
         STRANGER,
         &clock,
@@ -438,6 +450,9 @@ fun owner_cap_of_another_vault_cannot_withdraw() {
     scenario.next_tx(STRANGER);
     let other_owner = vault::create(
         default_limits(),
+        FEE_CAP,
+        TREASURY,
+        FREE_DAYS,
         coin::mint_for_testing<SUI>(ONE, scenario.ctx()),
         STRANGER,
         &clock,
@@ -567,5 +582,209 @@ fun destroy_trade_cap_works_for_the_holder() {
     scenario.next_tx(OPERATOR);
     let trade_cap = scenario.take_from_sender<TradeCap>();
     vault::destroy_trade_cap(trade_cap);
+    finish(scenario, clock);
+}
+
+// === Daily fee (SPEC 1b) ===
+
+/// Moves the clock to `days` after creation (the vault is created on day 10).
+fun at_day_after_creation(clock: &mut Clock, days: u64) { clock.set_for_testing((10 + days) * DAY_MS) }
+
+fun treasury_received(scenario: &mut Scenario, expected: u64) {
+    scenario.next_tx(TREASURY);
+    let fee = scenario.take_from_sender<Coin<SUI>>();
+    assert_eq!(fee.value(), expected);
+    destroy(fee);
+}
+
+#[test]
+fun create_records_fee_terms_and_free_period() {
+    let (scenario, clock) = setup(100 * ONE);
+    let (v, owner_cap, trade_cap) = take(&scenario);
+    assert_eq!(v.daily_fee_cap(), FEE_CAP);
+    assert_eq!(v.treasury(), TREASURY);
+    // Created on day 10 with 7 free days: days 10..=16 are free, the first fee is due on day 17.
+    assert_eq!(v.last_fee_day(), 16);
+    give_back(v, owner_cap, trade_cap);
+    finish(scenario, clock);
+}
+
+#[test, expected_failure(abort_code = vault::EFeeNotDue)]
+fun fee_cannot_be_charged_in_the_free_period() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, _owner_cap, trade_cap) = take(&scenario);
+    at_day_after_creation(&mut clock, 6);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    abort 99
+}
+
+#[test]
+fun fee_after_the_free_period_goes_only_to_the_treasury() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    assert_eq!(v.sui_value(), 100 * ONE - FEE_CAP);
+    assert_eq!(v.last_fee_day(), 17);
+    give_back(v, owner_cap, trade_cap);
+    treasury_received(&mut scenario, FEE_CAP);
+    finish(scenario, clock);
+}
+
+#[test]
+fun fee_with_no_free_period_is_due_on_creation_day() {
+    let (mut scenario, clock) = setup_with_free_days(100 * ONE, 0);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    give_back(v, owner_cap, trade_cap);
+    treasury_received(&mut scenario, FEE_CAP);
+    finish(scenario, clock);
+}
+
+#[test, expected_failure(abort_code = vault::EFeeNotDue)]
+fun fee_cannot_be_charged_twice_in_a_day() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, _owner_cap, trade_cap) = take(&scenario);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP / 2, &clock, scenario.ctx());
+    clock.increment_for_testing(DAY_MS - 1); // still the same calendar day
+    v.charge_fee(&trade_cap, FEE_CAP / 2, &clock, scenario.ctx());
+    abort 99
+}
+
+#[test]
+fun fee_can_be_charged_again_the_next_day_but_never_backdated() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    // Skipping three days still allows only one charge on the day it runs.
+    at_day_after_creation(&mut clock, 11);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    assert_eq!(v.sui_value(), 100 * ONE - 2 * FEE_CAP);
+    assert_eq!(v.last_fee_day(), 21);
+    give_back(v, owner_cap, trade_cap);
+    finish(scenario, clock);
+}
+
+#[test]
+fun fee_at_exactly_the_cap_passes() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    give_back(v, owner_cap, trade_cap);
+    finish(scenario, clock);
+}
+
+#[test, expected_failure(abort_code = vault::EExceedsDailyFeeCap)]
+fun fee_above_the_cap_aborts() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, _owner_cap, trade_cap) = take(&scenario);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP + 1, &clock, scenario.ctx());
+    abort 99
+}
+
+#[test, expected_failure(abort_code = vault::EZeroAmount)]
+fun zero_fee_aborts() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, _owner_cap, trade_cap) = take(&scenario);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, 0, &clock, scenario.ctx());
+    abort 99
+}
+
+#[test, expected_failure(abort_code = vault::EPaused)]
+fun paused_vault_pays_no_fee() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.pause(&owner_cap);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    abort 99
+}
+
+#[test, expected_failure(abort_code = vault::EAgentNotAuthorized)]
+fun revoked_vault_pays_no_fee() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.revoke_agent(&owner_cap);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    abort 99
+}
+
+#[test, expected_failure(abort_code = vault::EInsufficientSui)]
+fun fee_never_sells_tokens_to_pay() {
+    let (mut scenario, mut clock) = setup(5 * ONE);
+    let (mut v, _owner_cap, trade_cap) = take(&scenario);
+    // All SUI is in a position; the fee aborts instead of touching tokens.
+    buy<MEME_A>(&mut v, &trade_cap, 5 * ONE, 1, 1_000, 0, &clock);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    abort 99
+}
+
+#[test]
+fun owner_changes_fee_terms_and_the_new_treasury_is_paid() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.set_fee_terms(&owner_cap, FEE_CAP / 4, STRANGER);
+    assert_eq!(v.daily_fee_cap(), FEE_CAP / 4);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP / 4, &clock, scenario.ctx());
+    give_back(v, owner_cap, trade_cap);
+    scenario.next_tx(STRANGER);
+    let fee = scenario.take_from_sender<Coin<SUI>>();
+    assert_eq!(fee.value(), FEE_CAP / 4);
+    destroy(fee);
+    finish(scenario, clock);
+}
+
+#[test, expected_failure(abort_code = vault::EExceedsDailyFeeCap)]
+fun zero_fee_cap_means_no_fee_can_ever_be_charged() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.set_fee_terms(&owner_cap, 0, TREASURY);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, 1, &clock, scenario.ctx());
+    abort 99
+}
+
+#[test, expected_failure(abort_code = vault::EWrongVault)]
+fun fee_terms_need_the_vaults_own_owner_cap() {
+    let (mut scenario, clock) = setup(100 * ONE);
+    scenario.next_tx(STRANGER);
+    let other_owner = vault::create(
+        default_limits(),
+        FEE_CAP,
+        STRANGER,
+        FREE_DAYS,
+        coin::mint_for_testing<SUI>(ONE, scenario.ctx()),
+        STRANGER,
+        &clock,
+        scenario.ctx(),
+    );
+    let other_vault_id = other_owner.owner_cap_vault_id();
+    scenario.next_tx(STRANGER);
+    let a = scenario.take_shared<AgentVault>();
+    let b = scenario.take_shared<AgentVault>();
+    let (mut victim, theirs) = if (object::id(&a) == other_vault_id) (b, a) else (a, b);
+    ts::return_shared(theirs);
+    victim.set_fee_terms(&other_owner, 100 * ONE, STRANGER);
+    abort 99
+}
+
+#[test]
+fun owner_withdraws_everything_regardless_of_fees() {
+    let (mut scenario, mut clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    at_day_after_creation(&mut clock, 7);
+    v.charge_fee(&trade_cap, FEE_CAP, &clock, scenario.ctx());
+    let all = v.withdraw_all_sui(&owner_cap, scenario.ctx());
+    assert_eq!(all.value(), 100 * ONE - FEE_CAP);
+    destroy(all);
+    give_back(v, owner_cap, trade_cap);
     finish(scenario, clock);
 }

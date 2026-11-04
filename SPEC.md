@@ -35,16 +35,68 @@ A public **leaderboard** compares users and models.
 
 ---
 
+## 1b. Locked UX and billing decisions (seamless by design)
+
+These decisions override anything less specific elsewhere in this spec.
+
+### Setup is 3 screens and 1 signature
+
+1. **Connect.** Wallet connect via dapp-kit. Also offer **"Sign in with Google / X"** through Sui zkLogin (Mysten's Enoki), so people without a crypto wallet get a Sui address in one click. Both paths produce the same thing: a Sui address that owns the vault.
+2. **Choose.** One screen with:
+   - the model: two big cards, Claude or ChatGPT, with live stats;
+   - the risk level: a 3-position slider (Careful, **Balanced** as default, Degen);
+   - the deposit amount, with a minimum and a "max" button.
+3. **Start.** One button, **one wallet signature**. A single PTB:
+   - creates the vault,
+   - deposits,
+   - writes the limits,
+   - authorizes the agent (TradeCap to the operator),
+   - sets the daily fee cap (below).
+
+The dashboard opens with "Your agent is reading the market…", and the first decision appears within about a minute.
+
+There is no API key, no second token, no top-up screen and no separate gas balance.
+
+### Billing: a flat daily fee, taken automatically from the vault
+
+- **Price:** a flat **daily fee while the agent is running**, in SUI. It covers the AI model cost, gas for agent trades, and margin. A paused or closed vault pays nothing.
+- **First 7 days free:** Blast covers them, to remove friction at signup.
+- **On-chain mechanics:**
+  - The vault stores `daily_fee_cap` (MIST), which the user approves at creation and sees on the Start screen ("up to X SUI per day while running").
+  - A `charge_fee(vault, trade_cap, amount, clock)` function sends at most `daily_fee_cap` per calendar day to a **fixed treasury address set at creation**.
+  - It can't be charged twice in a day, can't exceed the cap, and can't go anywhere else.
+  - The operator charges once a day.
+  - This is the **only** way any SUI ever leaves the vault other than to the owner. It's tested like the withdraw rule.
+- **Why flat daily, not per decision or per trade:**
+  - The price is predictable ("X SUI a day").
+  - It doesn't push the bot to overtrade (unlike a per-trade fee).
+  - It isn't profit-sharing, which is the most legally sensitive model.
+  - Our cost per vault is kept under the fee by the skip-when-unchanged rule and prompt caching of the shared market snapshot.
+- **Dashboard:** the fees paid so far sit next to P&L, and P&L is shown **net of fees**.
+- **Edge cases:**
+  - If the vault holds too little SUI for the fee, the agent sells nothing to pay it. It pauses itself and the user gets a "top up or withdraw" notice.
+  - Fee changes only apply to new vaults, or to existing ones after the user re-approves.
+
+### Seamless details
+
+- **Gas:** the operator pays gas for agent trades (covered by the daily fee). Users only ever sign: Start, Deposit, Withdraw, Pause/Resume, Change limits, Revoke.
+- **Notifications:** opt-in email or Telegram for trades, the daily summary, drawdown-halt and low-balance.
+- **Withdraw:** one button, "Withdraw everything as SUI". The operator sells positions in the background, then the user signs one transaction. A fallback "withdraw as-is" always works with no backend.
+- **Model switch:** one tap, no signature (it's an off-chain setting). It takes effect on the next tick.
+- **Plain-language signing:** before every signature, show one sentence saying exactly what the transaction does.
+
+---
+
 ## 2. Glossary
 
-| Term        | Meaning                                                                                                               |
-| ----------- | --------------------------------------------------------------------------------------------------------------------- |
-| Launch      | A Blast bonding-curve coin (`blast_fun::launch::Launch<Meme, Quote>`), traded against SUI until it graduates to a DEX |
-| Agent vault | A Move object owned by the user that holds the SUI and tokens the agent trades with                                   |
-| OwnerCap    | Capability held by the user's wallet: deposit, withdraw, set limits, pause, revoke                                    |
-| TradeCap    | Capability held by the agent's operator key: buy and sell within limits, nothing else                                 |
-| Operator    | Our backend service that runs the agents and holds TradeCaps in a KMS                                                 |
-| Tick        | One decision cycle for one vault                                                                                      |
+| Term | Meaning |
+| --- | --- |
+| Launch | A Blast bonding-curve coin (`blast_fun::launch::Launch<Meme, Quote>`), traded against SUI until it graduates to a DEX |
+| Agent vault | A Move object owned by the user that holds the SUI and tokens the agent trades with |
+| OwnerCap | Capability held by the user's wallet: deposit, withdraw, set limits, pause, revoke |
+| TradeCap | Capability held by the agent's operator key: buy and sell within limits, nothing else |
+| Operator | Our backend service that runs the agents and holds TradeCaps in a KMS |
+| Tick | One decision cycle for one vault |
 
 ---
 
@@ -62,11 +114,11 @@ A public **leaderboard** compares users and models.
    - cost to the user, if any
 5. **Pick a risk preset.** Each preset can be edited before confirming:
 
-   | Preset   | Per trade     | Per launch | Daily spend | Max open positions | Drawdown stop |
-   | -------- | ------------- | ---------- | ----------- | ------------------ | ------------- |
-   | Careful  | 2% of deposit | 5%         | 10%         | 3                  | 15%           |
-   | Balanced | 5%            | 15%        | 30%         | 5                  | 30%           |
-   | Degen    | 10%           | 25%        | 60%         | 8                  | 50%           |
+   | Preset | Per trade | Per launch | Daily spend | Max open positions | Drawdown stop |
+   | --- | --- | --- | --- | --- | --- |
+   | Careful | 2% of deposit | 5% | 10% | 3 | 15% |
+   | Balanced | 5% | 15% | 30% | 5 | 30% |
+   | Degen | 10% | 25% | 60% | 8 | 50% |
 
    The amounts are converted to SUI at confirmation and written on-chain.
 6. **Create the vault and deposit.** One PTB, signed by the user, that:
@@ -123,15 +175,15 @@ A public **leaderboard** compares users and models.
 └────────────┘               └──────────────────┘
 ```
 
-| Component     | Tech                                                                                                 | Notes                                                                                                                                   |
-| ------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Web app       | Next.js 16 (App Router), TypeScript, Tailwind, `@mysten/dapp-kit-react`, TanStack Query, Recharts    | Blast design tokens: canvas `#0D1117`, punch `#FF4C98`, deep `#F12D82`, kicker `#EFA1C9`, border `#28333F`, muted `#8E9CAB`, font Inter |
-| API           | Node 22, Fastify or Next route handlers, zod validation                                              | Session auth from a signed wallet message (no passwords)                                                                                |
-| Agent workers | `packages/agent-core` from `blast-arena-agent`, BullMQ + Redis for the tick queue                    | One job per vault per tick; concurrency-limited per model provider                                                                      |
-| Signing       | Operator key in a KMS (AWS KMS or GCP KMS, Ed25519/secp256k1 supported by Sui; `@mysten/kms` exists) | The key never lives in app memory or env files in production                                                                            |
-| Indexer       | Polls Sui events (`listEvents`) for Blast launch events and our vault events → Postgres              | Rebuildable from chain                                                                                                                  |
-| DB            | Postgres 16                                                                                          | Schema in section 8                                                                                                                     |
-| Contracts     | Sui Move package `blast_agent_vault`                                                                 | Section 5                                                                                                                               |
+| Component | Tech | Notes |
+| --- | --- | --- |
+| Web app | Next.js 16 (App Router), TypeScript, Tailwind, `@mysten/dapp-kit-react`, TanStack Query, Recharts | Blast design tokens: canvas `#0D1117`, punch `#FF4C98`, deep `#F12D82`, kicker `#EFA1C9`, border `#28333F`, muted `#8E9CAB`, font Inter |
+| API | Node 22, Fastify or Next route handlers, zod validation | Session auth from a signed wallet message (no passwords) |
+| Agent workers | `packages/agent-core` from `blast-arena-agent`, BullMQ + Redis for the tick queue | One job per vault per tick; concurrency-limited per model provider |
+| Signing | Operator key in a KMS (AWS KMS or GCP KMS, Ed25519/secp256k1 supported by Sui; `@mysten/kms` exists) | The key never lives in app memory or env files in production |
+| Indexer | Polls Sui events (`listEvents`) for Blast launch events and our vault events → Postgres | Rebuildable from chain |
+| DB | Postgres 16 | Schema in section 8 |
+| Contracts | Sui Move package `blast_agent_vault` | Section 5 |
 
 SDKs:
 - `@interest-protocol/blast-launchpad-sdk` (0.1.2+): launch state, previews, tx builders, event decoding
@@ -190,6 +242,10 @@ public struct TradeCap has key, store { id: UID, vault_id: ID }
 - `pause(vault, cap)` / `resume(vault, cap)`.
 - `revoke_agent(vault, cap)`: sets `trade_cap_id = none`.
 - `authorize_agent(vault, cap, operator: address, ctx)`: mints a new TradeCap (for a model or operator change, or after a revoke).
+- `set_fee_terms(vault, cap, daily_fee_cap, treasury)`: changes the fee terms; owner only (section 1b).
+
+Fee function (TradeCap, section 1b):
+- `charge_fee(vault, cap, amount, clock)`: pays at most `daily_fee_cap` once per calendar day to the vault's fixed `treasury`. It aborts if called twice in a day, if the amount is over the cap, or if the vault is paused. The vault gains the fields `daily_fee_cap: u64`, `treasury: address` and `last_fee_day: u64`.
 
 ### 5.3 Agent functions (TradeCap)
 
@@ -245,23 +301,23 @@ Blast's real signatures, as of 4 Nov 2026:
 
 Reuse `blast-arena-agent`. Changes:
 
-| Area            | Change                                                                                                                                                           |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Market snapshot | Build once per tick globally (all launches), then share it with every vault's job. No per-user reads of the market                                               |
-| Wallet view     | Read from the vault object (SUI balance and token Bag), not from an address balance                                                                              |
-| Decision        | Same strict JSON schema: `buy`, `sell` or hold. Remove `join_opening_round` for vaults (5.4)                                                                     |
-| Risk check      | Mirror the on-chain limits off-chain (so rejections are explained), plus the drawdown stop and a slippage of 3% by default                                       |
-| Execution       | Build a PTB calling `blast_agent_vault::buy/sell`, simulate, then sign via KMS and submit. Never sign if the simulation fails                                    |
-| Cadence         | Tick every 60 s per vault, staggered. Skip the LLM call when nothing changed for that vault (no new launches, no price move > 5% on held positions) to save cost |
-| Timeouts        | 90 s per model call; a timeout counts as a hold                                                                                                                  |
-| Logging         | Every decision, verdict and tx goes to Postgres (`decisions`, `trades`)                                                                                          |
+| Area | Change |
+| --- | --- |
+| Market snapshot | Build once per tick globally (all launches), then share it with every vault's job. No per-user reads of the market |
+| Wallet view | Read from the vault object (SUI balance and token Bag), not from an address balance |
+| Decision | Same strict JSON schema: `buy`, `sell` or hold. Remove `join_opening_round` for vaults (5.4) |
+| Risk check | Mirror the on-chain limits off-chain (so rejections are explained), plus the drawdown stop and a slippage of 3% by default |
+| Execution | Build a PTB calling `blast_agent_vault::buy/sell`, simulate, then sign via KMS and submit. Never sign if the simulation fails |
+| Cadence | Tick every 60 s per vault, staggered. Skip the LLM call when nothing changed for that vault (no new launches, no price move > 5% on held positions) to save cost |
+| Timeouts | 90 s per model call; a timeout counts as a hold |
+| Logging | Every decision, verdict and tx goes to Postgres (`decisions`, `trades`) |
 
 ### 6.1 Models
 
-| Option in UI | Model ID            | Provider  | Notes                                                      |
-| ------------ | ------------------- | --------- | ---------------------------------------------------------- |
-| Claude       | `claude-sonnet-5-5` | Anthropic | Structured output via `output_config.format` (JSON schema) |
-| ChatGPT      | `gpt-6.1-sol`       | OpenAI    | Responses API, `text.format` JSON schema, `strict: true`   |
+| Option in UI | Model ID | Provider | Notes |
+| --- | --- | --- | --- |
+| Claude | `claude-sonnet-5-5` | Anthropic | Structured output via `output_config.format` (JSON schema) |
+| ChatGPT | `gpt-6.1-sol` | OpenAI | Responses API, `text.format` JSON schema, `strict: true` |
 
 - Same system prompt, same snapshot and same limits for both. The prompt is in `agent-core/src/traders.ts`.
 - Model IDs come from config, so they can be swapped without a deploy. Confirm the IDs are enabled on our accounts before launch.
@@ -275,20 +331,20 @@ Token names, symbols and descriptions are written by creators. Pass them only in
 
 ## 7. API (REST + WebSocket)
 
-| Method | Path                               | Purpose                                                                                                          |
-| ------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| POST   | `/auth/challenge` → `/auth/verify` | Wallet sign-in (signed personal message), returns a session                                                      |
-| GET    | `/models`                          | Available models plus their stats (section 9)                                                                    |
-| POST   | `/vaults/prepare`                  | Body: model and limits. Returns unsigned PTB bytes to create the vault and deposit; the user signs in the wallet |
-| POST   | `/vaults/:id/confirm`              | Body: tx digest. The backend verifies the on-chain vault and starts ticking                                      |
-| GET    | `/vaults/:id`                      | Status, value, positions, limits                                                                                 |
-| PATCH  | `/vaults/:id`                      | Change model (off-chain); limit changes return a PTB for the user to sign                                        |
-| POST   | `/vaults/:id/pause` / `/resume`    | Returns a PTB to sign. The backend also stops ticking immediately                                                |
-| POST   | `/vaults/:id/withdraw-all`         | Operator sells positions, then returns the withdrawal PTB                                                        |
-| GET    | `/vaults/:id/decisions?cursor=`    | Activity feed                                                                                                    |
-| GET    | `/leaderboard?period=7d            | 30d                                                                                                              | all&sort=` | Section 9 |
-| GET    | `/stats/platform`                  | Section 9                                                                                                        |
-| WS     | `/ws/vaults/:id`                   | Live decisions, trades, value                                                                                    |
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/auth/challenge` → `/auth/verify` | Wallet sign-in (signed personal message), returns a session |
+| GET | `/models` | Available models plus their stats (section 9) |
+| POST | `/vaults/prepare` | Body: model and limits. Returns unsigned PTB bytes to create the vault and deposit; the user signs in the wallet |
+| POST | `/vaults/:id/confirm` | Body: tx digest. The backend verifies the on-chain vault and starts ticking |
+| GET | `/vaults/:id` | Status, value, positions, limits |
+| PATCH | `/vaults/:id` | Change model (off-chain); limit changes return a PTB for the user to sign |
+| POST | `/vaults/:id/pause` / `/resume` | Returns a PTB to sign. The backend also stops ticking immediately |
+| POST | `/vaults/:id/withdraw-all` | Operator sells positions, then returns the withdrawal PTB |
+| GET | `/vaults/:id/decisions?cursor=` | Activity feed |
+| GET | `/leaderboard?period=7d|30d|all&sort=` | Section 9 |
+| GET | `/stats/platform` | Section 9 |
+| WS | `/ws/vaults/:id` | Live decisions, trades, value |
 
 Every endpoint that mutates a vault checks the session wallet is the vault owner.
 
@@ -329,26 +385,26 @@ launches(launch_id, meme_type, symbol, lifecycle, graduated_at, ...)        -- f
 
 ### 9.2 Per-user stats (dashboard and leaderboard row)
 
-| Stat               | Definition                                                    |
-| ------------------ | ------------------------------------------------------------- |
-| Vault value        | SUI + tokens at executable curve-sell value (SUI and USD)     |
-| Net deposits       | Deposits − withdrawals                                        |
-| P&L                | Value − net deposits (SUI and %)                              |
-| Return (TWR)       | Time-weighted return for the period                           |
-| Max drawdown       | Largest peak-to-trough fall in value, %                       |
-| Return / drawdown  | TWR ÷ max drawdown. The main risk-adjusted rank               |
-| Win rate           | Closed positions with realized P&L > 0 ÷ closed positions     |
-| Avg win / avg loss | Mean realized P&L of winners vs losers (SUI)                  |
-| Profit factor      | Gross realized profit ÷ gross realized loss                   |
-| Trades             | Count of executed buys and sells                              |
-| Volume             | SUI traded through Blast                                      |
-| Avg hold time      | Mean time from open to close                                  |
-| Best / worst trade | Largest realized gain and loss, with the coin                 |
-| Graduation hits    | Positions bought before a launch graduated ÷ positions opened |
-| Fees paid          | Blast trade fees + creator sell burn + gas share (SUI)        |
-| Hold ratio         | Ticks with no action ÷ all ticks (how selective the agent is) |
-| Model              | Current model, with model changes marked on the chart         |
-| Days active        | Since vault creation                                          |
+| Stat | Definition |
+| --- | --- |
+| Vault value | SUI + tokens at executable curve-sell value (SUI and USD) |
+| Net deposits | Deposits − withdrawals |
+| P&L | Value − net deposits (SUI and %) |
+| Return (TWR) | Time-weighted return for the period |
+| Max drawdown | Largest peak-to-trough fall in value, % |
+| Return / drawdown | TWR ÷ max drawdown. The main risk-adjusted rank |
+| Win rate | Closed positions with realized P&L > 0 ÷ closed positions |
+| Avg win / avg loss | Mean realized P&L of winners vs losers (SUI) |
+| Profit factor | Gross realized profit ÷ gross realized loss |
+| Trades | Count of executed buys and sells |
+| Volume | SUI traded through Blast |
+| Avg hold time | Mean time from open to close |
+| Best / worst trade | Largest realized gain and loss, with the coin |
+| Graduation hits | Positions bought before a launch graduated ÷ positions opened |
+| Fees paid | Blast trade fees + creator sell burn + gas share (SUI) |
+| Hold ratio | Ticks with no action ÷ all ticks (how selective the agent is) |
+| Model | Current model, with model changes marked on the chart |
+| Days active | Since vault creation |
 
 ### 9.3 Leaderboard views
 
@@ -378,22 +434,22 @@ launches(launch_id, meme_type, symbol, lifecycle, graduated_at, ...)        -- f
 
 ### 9.4 Platform stats (public page)
 
-| Stat                     | Definition                                                                 |
-| ------------------------ | -------------------------------------------------------------------------- |
-| Total value in vaults    | Sum of vault values (SUI and USD)                                          |
-| Active vaults / users    | Status running in the last 24 h                                            |
-| New vaults               | Per day and per week                                                       |
-| Model split              | % of vaults and % of value per model                                       |
-| Volume on Blast          | SUI traded by agents: 24 h, 7 d, all-time                                  |
-| Trades                   | Count: 24 h, 7 d, all-time                                                 |
-| Launches traded          | Distinct launches agents have touched                                      |
-| Aggregate P&L            | Net realized + unrealized across all vaults (shown even when negative)     |
-| % vaults in profit       | Platform-wide and per model                                                |
-| Fees generated for Blast | Blast's share of trade fees from agent volume                              |
-| Avg decision latency     | Per model                                                                  |
-| Hold ratio               | Per model                                                                  |
-| Risk-check outcomes      | % of proposed actions executed / clamped / rejected, top rejection reasons |
-| Uptime                   | % of scheduled ticks that ran                                              |
+| Stat | Definition |
+| --- | --- |
+| Total value in vaults | Sum of vault values (SUI and USD) |
+| Active vaults / users | Status running in the last 24 h |
+| New vaults | Per day and per week |
+| Model split | % of vaults and % of value per model |
+| Volume on Blast | SUI traded by agents: 24 h, 7 d, all-time |
+| Trades | Count: 24 h, 7 d, all-time |
+| Launches traded | Distinct launches agents have touched |
+| Aggregate P&L | Net realized + unrealized across all vaults (shown even when negative) |
+| % vaults in profit | Platform-wide and per model |
+| Fees generated for Blast | Blast's share of trade fees from agent volume |
+| Avg decision latency | Per model |
+| Hold ratio | Per model |
+| Risk-check outcomes | % of proposed actions executed / clamped / rejected, top rejection reasons |
+| Uptime | % of scheduled ticks that ran |
 
 ---
 
@@ -425,7 +481,7 @@ launches(launch_id, meme_type, symbol, lifecycle, graduated_at, ...)        -- f
 
 ## 12. Open decisions (for Mário and Jose)
 
-- [ ] User fee model: none, a % of profits (high-water mark), or a flat monthly fee. Each has legal implications.
+- [x] User fee model: **flat daily fee from the vault, first 7 days free** (section 1b). Still open: the exact SUI amount, set once real AI cost per vault per day is measured in the arena phase.
 - [ ] Minimum and maximum deposit per vault.
 - [ ] Final risk preset numbers.
 - [ ] Whether to keep opening rounds and presales out of v1, or ask for a Blast change that lets a caller name the recipient (5.4).

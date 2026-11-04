@@ -1,6 +1,8 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
-  "files": { "includes": ["**", "!**/node_modules", "!**/dist", "!**/.next", "!move", "!**/pnpm-lock.yaml"] },
+  "files": {
+    "includes": ["**", "!**/node_modules", "!**/dist", "!**/.next", "!move", "!**/pnpm-lock.yaml", "!SPEC.md"]
+  },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
   "linter": { "enabled": true, "rules": { "preset": "recommended" } },
   "assist": { "actions": { "source": { "organizeImports": "on" } } }

@@ -4,9 +4,12 @@
 /// - The user holds an `OwnerCap`. It can deposit, withdraw, change limits, pause, revoke and
 ///   re-authorize. Owner functions never check `paused` or the agent state, so the owner can
 ///   always withdraw.
-/// - The operator (our backend) holds a `TradeCap`. It can only call `buy` and `sell`. Both move
-///   value between `vault.sui` and `vault.tokens` through a Blast curve. No function that takes a
-///   `TradeCap` returns a `Coin` or a `Balance`, so the agent can never take funds out.
+/// - The operator (our backend) holds a `TradeCap`. It can call `buy` and `sell`, which only move
+///   value between `vault.sui` and `vault.tokens` through a Blast curve, and `charge_fee`. No
+///   function that takes a `TradeCap` returns a `Coin` or a `Balance`.
+/// - The daily fee (SPEC 1b) is the only way SUI leaves the vault other than to the owner: at most
+///   `daily_fee_cap`, at most once per calendar day, only to the `treasury` the owner approved,
+///   never while paused or revoked, and never during the free period set at creation.
 /// - Hard caps (per trade, per launch, per day, open positions, non-zero `min_out`) are enforced
 ///   here, on-chain. The drawdown stop is enforced off-chain by the operator (SPEC 5.4.4).
 module blast_agent_vault::vault;
@@ -53,6 +56,10 @@ const EInvalidLimits: u64 = 11;
 const EOutputBelowMin: u64 = 12;
 /// SUI goes through the SUI functions, never the token bag.
 const ESuiIsNotAToken: u64 = 13;
+/// The fee for today was already charged, or today is still in the free period.
+const EFeeNotDue: u64 = 14;
+/// Fee is above `daily_fee_cap`.
+const EExceedsDailyFeeCap: u64 = 15;
 
 // === Constants ===
 
@@ -80,6 +87,12 @@ public struct AgentVault has key {
     position_cost: Table<TypeName, u64>,
     /// Number of token types in `tokens`.
     open_positions: u64,
+    /// Most SUI (MIST) `charge_fee` may take per calendar day. Approved by the owner.
+    daily_fee_cap: u64,
+    /// The only address `charge_fee` pays. Approved by the owner.
+    treasury: address,
+    /// Last day already paid for, or covered by the free period. A fee is due when today is later.
+    last_fee_day: u64,
 }
 
 public struct Limits has copy, drop, store {
@@ -112,7 +125,16 @@ public struct SellTicket {
 
 // === Events ===
 
-public struct VaultCreated has copy, drop { vault_id: ID, owner: address, operator: address, limits: Limits }
+public struct VaultCreated has copy, drop {
+    vault_id: ID,
+    owner: address,
+    operator: address,
+    limits: Limits,
+    daily_fee_cap: u64,
+    treasury: address,
+    /// First day a fee can be charged.
+    first_fee_day: u64,
+}
 
 public struct Deposited has copy, drop { vault_id: ID, coin_type: TypeName, amount: u64 }
 
@@ -127,6 +149,10 @@ public struct Resumed has copy, drop { vault_id: ID }
 public struct AgentAuthorized has copy, drop { vault_id: ID, trade_cap_id: ID, operator: address }
 
 public struct AgentRevoked has copy, drop { vault_id: ID, trade_cap_id: Option<ID> }
+
+public struct FeeTermsChanged has copy, drop { vault_id: ID, daily_fee_cap: u64, treasury: address }
+
+public struct FeeCharged has copy, drop { vault_id: ID, amount: u64, day: u64, treasury: address }
 
 /// `side`: 0 = buy, 1 = sell. `sui_amount` is net SUI spent (buy, after refund) or received (sell).
 public struct AgentTraded has copy, drop {
@@ -158,16 +184,24 @@ fun assert_valid_limits(limits: &Limits) {
 
 // === Owner functions (OwnerCap) ===
 
-/// Creates and shares a vault funded with `coin`, sends a TradeCap to `operator`, and returns the
-/// OwnerCap (the PTB transfers it to the user).
+/// The single "Start" call (SPEC 1b): creates and shares a vault funded with `coin`, writes the
+/// limits and the fee terms, sends a TradeCap to `operator`, and returns the OwnerCap (the PTB
+/// transfers it to the user). No fee can be charged for `free_days` calendar days, starting today.
 public fun create(
     limits: Limits,
+    daily_fee_cap: u64,
+    treasury: address,
+    free_days: u64,
     coin: Coin<SUI>,
     operator: address,
     clock: &Clock,
     ctx: &mut TxContext,
 ): OwnerCap {
     assert_valid_limits(&limits);
+    let today = clock.timestamp_ms() / MS_PER_DAY;
+    // Fees are due from day `today + free_days`. Sui's clock is far past day 0, so this never
+    // underflows on a real network.
+    let last_fee_day = today + free_days - 1;
     let mut vault = AgentVault {
         id: object::new(ctx),
         owner: ctx.sender(),
@@ -180,9 +214,20 @@ public fun create(
         spent_today: 0,
         position_cost: table::new(ctx),
         open_positions: 0,
+        daily_fee_cap,
+        treasury,
+        last_fee_day,
     };
     let vault_id = object::id(&vault);
-    event::emit(VaultCreated { vault_id, owner: ctx.sender(), operator, limits });
+    event::emit(VaultCreated {
+        vault_id,
+        owner: ctx.sender(),
+        operator,
+        limits,
+        daily_fee_cap,
+        treasury,
+        first_fee_day: last_fee_day + 1,
+    });
 
     let owner_cap = OwnerCap { id: object::new(ctx), vault_id };
     vault.deposit_sui(&owner_cap, coin);
@@ -258,6 +303,14 @@ public fun resume(vault: &mut AgentVault, cap: &OwnerCap) {
     event::emit(Resumed { vault_id: object::id(vault) });
 }
 
+/// Changes the fee terms. Owner only: a fee change applies only once the owner re-approves it.
+public fun set_fee_terms(vault: &mut AgentVault, cap: &OwnerCap, daily_fee_cap: u64, treasury: address) {
+    vault.assert_owner(cap);
+    vault.daily_fee_cap = daily_fee_cap;
+    vault.treasury = treasury;
+    event::emit(FeeTermsChanged { vault_id: object::id(vault), daily_fee_cap, treasury });
+}
+
 /// Instant kill: every later call with the old TradeCap aborts.
 public fun revoke_agent(vault: &mut AgentVault, cap: &OwnerCap) {
     vault.assert_owner(cap);
@@ -330,6 +383,23 @@ public fun sell<Meme>(
         ctx,
     );
     vault.finish_sell(ticket, quote_out.into_balance());
+}
+
+/// Pays the daily fee: at most `daily_fee_cap`, at most once per calendar day, only to
+/// `vault.treasury`. Aborts while paused or revoked, during the free period, or if the vault holds
+/// too little SUI (the operator then stops the agent and tells the user; it never sells to pay).
+public fun charge_fee(vault: &mut AgentVault, cap: &TradeCap, amount: u64, clock: &Clock, ctx: &mut TxContext) {
+    vault.assert_agent(cap);
+    assert!(amount > 0, EZeroAmount);
+    assert!(amount <= vault.daily_fee_cap, EExceedsDailyFeeCap);
+    let today = clock.timestamp_ms() / MS_PER_DAY;
+    assert!(today > vault.last_fee_day, EFeeNotDue);
+    assert!(amount <= vault.sui.value(), EInsufficientSui);
+
+    vault.last_fee_day = today;
+    let treasury = vault.treasury;
+    event::emit(FeeCharged { vault_id: object::id(vault), amount, day: today, treasury });
+    transfer::public_transfer(coin::from_balance(vault.sui.split(amount), ctx), treasury);
 }
 
 // === Agent internals (package only; split so every limit can be unit-tested) ===
@@ -502,6 +572,13 @@ public fun day_index(vault: &AgentVault): u64 { vault.day_index }
 
 /// Spend recorded for `day_index`; a later day starts from zero.
 public fun spent_today(vault: &AgentVault): u64 { vault.spent_today }
+
+public fun daily_fee_cap(vault: &AgentVault): u64 { vault.daily_fee_cap }
+
+public fun treasury(vault: &AgentVault): address { vault.treasury }
+
+/// A fee can be charged on any day after this one.
+public fun last_fee_day(vault: &AgentVault): u64 { vault.last_fee_day }
 
 public fun owner_cap_vault_id(cap: &OwnerCap): ID { cap.vault_id }
 

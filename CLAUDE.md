@@ -6,7 +6,8 @@ Rules:
 - Never sign a mainnet transaction, publish a Move package, or move funds without explicit approval from the user.
 - Dry-run (simulate only) is the default everywhere.
 - The agent must never be able to withdraw from a user's vault. Treat any change that weakens this as a blocker.
-  `scripts/check_trade_cap_surface.py` enforces it in CI: no public function taking a `TradeCap` may return a `Coin` or `Balance`.
+  The only other outflow is the capped daily fee (`charge_fee`, SPEC 1b), paid only to the owner-approved `vault.treasury`.
+  `scripts/check_trade_cap_surface.py` enforces both in CI.
 - `packages/agent-core` started as `starter/blast-arena-agent`.
 - Blast contract facts come from github.com/interest-protocol/blast-v2-contracts (start with llms.txt) and the SDK at github.com/interest-protocol/blast-v2-sdk. Source beats docs.
 - Blast's Move source is vendored at the canonical mainnet commit in `move/vendor/blast` (see its README). Don't edit it except to re-vendor.

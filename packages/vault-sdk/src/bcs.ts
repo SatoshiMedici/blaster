@@ -26,6 +26,9 @@ const agentVaultFields = {
   spent_today: bcs.u64(),
   position_cost: TableBcs,
   open_positions: bcs.u64(),
+  daily_fee_cap: bcs.u64(),
+  treasury: bcs.Address,
+  last_fee_day: bcs.u64(),
 };
 export const AgentVaultBcs = bcs.struct("AgentVault", agentVaultFields);
 
