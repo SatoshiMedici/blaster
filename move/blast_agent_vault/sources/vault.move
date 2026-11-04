@@ -60,12 +60,17 @@ const ESuiIsNotAToken: u64 = 13;
 const EFeeNotDue: u64 = 14;
 /// Fee is above `daily_fee_cap`.
 const EExceedsDailyFeeCap: u64 = 15;
+/// Unknown pause reason.
+const EInvalidPauseReason: u64 = 16;
 
 // === Constants ===
 
 const MS_PER_DAY: u64 = 86_400_000;
 const SIDE_BUY: u8 = 0;
 const SIDE_SELL: u8 = 1;
+const PAUSE_BY_OWNER: u8 = 0;
+/// Highest `reason` the agent may give when it pauses itself.
+const MAX_AGENT_PAUSE_REASON: u8 = 3;
 
 // === Objects ===
 
@@ -142,7 +147,8 @@ public struct Withdrawn has copy, drop { vault_id: ID, coin_type: TypeName, amou
 
 public struct LimitsChanged has copy, drop { vault_id: ID, limits: Limits }
 
-public struct Paused has copy, drop { vault_id: ID }
+/// `reason`: 0 = owner, 1 = agent could not pay the fee, 2 = agent drawdown stop, 3 = other agent halt.
+public struct Paused has copy, drop { vault_id: ID, reason: u8 }
 
 public struct Resumed has copy, drop { vault_id: ID }
 
@@ -294,7 +300,7 @@ public fun set_limits(vault: &mut AgentVault, cap: &OwnerCap, limits: Limits) {
 public fun pause(vault: &mut AgentVault, cap: &OwnerCap) {
     vault.assert_owner(cap);
     vault.paused = true;
-    event::emit(Paused { vault_id: object::id(vault) });
+    event::emit(Paused { vault_id: object::id(vault), reason: PAUSE_BY_OWNER });
 }
 
 public fun resume(vault: &mut AgentVault, cap: &OwnerCap) {
@@ -383,6 +389,17 @@ public fun sell<Meme>(
         ctx,
     );
     vault.finish_sell(ticket, quote_out.into_balance());
+}
+
+/// The agent stops itself (SPEC 1b: "it pauses itself" when it can't pay the fee, and on the
+/// drawdown stop). It can only pause, never resume: resuming needs the OwnerCap. This narrows the
+/// agent's power and moves no value. A revoked or foreign cap aborts, and so does an already
+/// paused vault (nothing to do).
+public fun pause_by_agent(vault: &mut AgentVault, cap: &TradeCap, reason: u8) {
+    vault.assert_agent(cap);
+    assert!(reason > PAUSE_BY_OWNER && reason <= MAX_AGENT_PAUSE_REASON, EInvalidPauseReason);
+    vault.paused = true;
+    event::emit(Paused { vault_id: object::id(vault), reason });
 }
 
 /// Pays the daily fee: at most `daily_fee_cap`, at most once per calendar day, only to

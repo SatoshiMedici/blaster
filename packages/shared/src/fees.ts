@@ -1,14 +1,16 @@
 import { z } from "zod";
 import { u64String } from "./limits.ts";
 
-/** Days Blast covers at signup before the first daily fee (SPEC 1b). */
-export const DEFAULT_FREE_DAYS = 7;
+import { PRICING } from "./pricing.ts";
+
+/** Free trial days (SPEC 1b: 3 days, once per wallet, minimum deposit required). See `trialDaysFor`. */
+export const DEFAULT_FREE_DAYS = PRICING.trialDays;
 
 /**
  * Fee terms the user approves on the Start screen and that the vault stores on-chain (SPEC 1b):
  * "up to `dailyFeeCap` per day while running", paid only to `treasury`, nothing for `freeDays`.
- * The exact SUI amount is still open: it is set once the real AI cost per vault per day is
- * measured in the arena phase.
+ * The cap is set by `quoteFeeTerms` (2× the day's $0.99 in SUI); the operator charges only the
+ * day's USD-equivalent (`decideDailyFee`).
  */
 export const FeeTerms = z.object({
   dailyFeeCapMist: u64String,

@@ -35,7 +35,8 @@ export type AgentView = {
 };
 
 /** One market snapshot, shared by both agents so the comparison is fair. */
-export type Market = { at: string; launches: LaunchView[]; states: Map<string, LaunchState> };
+/** `json` is the serialized launches, built once per tick so every agent's prompt prefix is identical (prompt caching). */
+export type Market = { at: string; launches: LaunchView[]; json: string; states: Map<string, LaunchState> };
 
 const metadataCache = new Map<string, { symbol: string; name: string }>();
 async function metadata(coinType: string) {
@@ -88,7 +89,8 @@ export async function readMarket(now = Date.now()): Promise<Market> {
       };
     }),
   );
-  return { at: new Date(now).toISOString(), launches, states };
+  launches.sort((a, b) => a.launch_id.localeCompare(b.launch_id));
+  return { at: new Date(now).toISOString(), launches, json: JSON.stringify(launches), states };
 }
 
 /** The agent's own wallet: SUI and every launch it holds, valued at an executable curve sell. */

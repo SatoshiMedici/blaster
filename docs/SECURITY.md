@@ -4,20 +4,21 @@ This document says what `blast_agent_vault` and the operator guarantee, what the
 
 ## Actors
 
-| Actor                   | Holds                               | Can                                                                         |
-| ----------------------- | ----------------------------------- | --------------------------------------------------------------------------- |
-| User                    | `OwnerCap` (in their wallet)        | deposit, withdraw, set limits, pause, resume, revoke, re-authorize          |
-| Operator (our backend)  | `TradeCap` (key in a KMS)           | `buy` and `sell` on Blast curves within the limits; `charge_fee` once a day |
-| Blast (`blast_fun`)     | its own admin roles                 | pause trading, upgrade the launchpad (version-gated)                        |
-| Vault UpgradeCap holder | `UpgradeCap` of `blast_agent_vault` | publish compatible upgrades (multisig + timelock, still to be decided)      |
+| Actor                   | Holds                               | Can                                                                                           |
+| ----------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------- |
+| User                    | `OwnerCap` (in their wallet)        | deposit, withdraw, set limits, pause, resume, revoke, re-authorize                            |
+| Operator (our backend)  | `TradeCap` (key in a KMS)           | `buy` and `sell` on Blast curves within the limits; `charge_fee` once a day; `pause_by_agent` |
+| Blast (`blast_fun`)     | its own admin roles                 | pause trading, upgrade the launchpad (version-gated)                                          |
+| Vault UpgradeCap holder | `UpgradeCap` of `blast_agent_vault` | publish compatible upgrades (multisig + timelock, still to be decided)                        |
 
 ## Guarantees (enforced on-chain)
 
 1. **The agent cannot withdraw.** No public function taking a `TradeCap` returns a `Coin`, `Balance` or capability. `buy` and `sell` only move value between `vault.sui` and `vault.tokens` through a Blast curve. This is checked by unit tests and by `scripts/check_trade_cap_surface.py` in CI.
 2. **The owner can always withdraw.** Owner functions check only that the `OwnerCap` matches the vault. Pause, revoke, limits and Blast's state don't affect them. Withdrawals don't call Blast, so a Blast pause or upgrade doesn't block them.
 3. **The daily fee is the only other outflow, and it is bounded (SPEC 1b).** `charge_fee` pays at most `daily_fee_cap` per calendar day, once, only to `vault.treasury`. Both values are approved by the owner at creation or through `set_fee_terms`. It pays nothing during the free period set at creation, while paused, or after revoke, never back-charges skipped days, and never sells tokens to pay. The CI guard allows exactly this transfer and no other outside owner functions.
-4. **Revoke is instant.** After `revoke_agent` or `authorize_agent`, every call with the old TradeCap aborts.
-5. **Hard caps:** per-trade, per-launch, per-day spend and the number of open positions. Every trade needs a non-zero `min_out`, and the output is checked against it again after the Blast call.
+4. **The agent can stop itself but never restart.** `pause_by_agent` (fee unpaid, drawdown stop) only sets `paused`; `resume` needs the OwnerCap.
+5. **Revoke is instant.** After `revoke_agent` or `authorize_agent`, every call with the old TradeCap aborts.
+6. **Hard caps:** per-trade, per-launch, per-day spend and the number of open positions. Every trade needs a non-zero `min_out`, and the output is checked against it again after the Blast call.
 
 ## What is _not_ guaranteed on-chain (residual risk)
 
@@ -31,6 +32,10 @@ This document says what `blast_agent_vault` and the operator guarantee, what the
 | Prompt injection via token names                                                                | The caps above                                                                                                                     | `untrusted_*` fields, length caps; limits never come from model output                                                     |
 | Malicious vault upgrade                                                                         | Depends on who holds the UpgradeCap                                                                                                | Multisig + timelock, published policy, audit before real users                                                             |
 | Blast upgrade breaks trading                                                                    | Trading aborts; withdrawals keep working                                                                                           | Compatible upgrade of the vault package, relinked to the new Blast version                                                 |
+
+## Operating-cost guards (SPEC 1b, docs/ECONOMICS.md)
+
+Spend controls are safety controls too: a runaway loop burns credits, not user funds, but an empty OpenRouter balance stops every agent. Model failures of any kind are a hold. An OpenRouter 402 trips the platform kill switch (`onModelFailure`). Per-vault ($0.45/day) and platform daily budgets fail closed. Prompts carry only public market data and the vault's own positions, and providers may not train on them (`data_collection: "deny"`, `zdr`). Treasury SUI→USDC conversions are only _proposed_ by code (`treasuryCurrencyReport`). A human approves and executes them.
 
 ## Out of scope for v1, and why
 

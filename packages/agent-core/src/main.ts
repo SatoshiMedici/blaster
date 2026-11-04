@@ -23,7 +23,7 @@ function setup(): Agent[] {
         `Set ${cfg.name.toUpperCase()}_SUI_SECRET_KEY, or ${cfg.name.toUpperCase()}_ADDRESS for a watch-only dry run`,
       );
     if (MODE === "live" && !signer) throw new Error(`live mode needs ${cfg.name.toUpperCase()}_SUI_SECRET_KEY`);
-    const other = AGENTS[(i + 1) % AGENTS.length]!;
+    const other = AGENTS[(i + 1) % AGENTS.length] ?? cfg;
     return { trader: makeTrader(cfg.name, cfg.model), address, signer, opponent: `${other.name} (${other.model})` };
   });
 }
@@ -59,7 +59,7 @@ async function runAgent(agent: Agent, market: Market): Promise<string> {
 
   // 3. Ask the model. A timeout or a crash counts as hold.
   const decision = await Promise.race([
-    agent.trader.decide({ market: market.launches, me: view, opponent: agent.opponent }),
+    agent.trader.decide({ market: market.launches, marketJson: market.json, me: view, opponent: agent.opponent }),
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("model timeout")), 90_000)),
   ]).catch((error: Error) => ({ summary: `error, holding: ${error.message}`, actions: [] }));
   log(name, { kind: "decision", model: agent.trader.model, value_sui: Number(valueMist) / 1e9, decision });

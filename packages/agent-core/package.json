@@ -10,12 +10,11 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "arena": "tsx src/main.ts",
     "arena:once": "tsx src/main.ts --once"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.4.0",
     "@blast-agents/shared": "workspace:*",
     "@interest-protocol/blast-deployments-sdk": "^0.1.4",
     "@interest-protocol/blast-launchpad-sdk": "^0.1.2",

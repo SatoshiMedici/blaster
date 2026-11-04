@@ -10,6 +10,7 @@ import {
   effectiveSpentToday,
   isFeeDue,
   MAINNET_BLAST_OBJECTS,
+  readVaults,
   typeNameToCoinType,
   VaultTransactions,
 } from "../src/index.ts";
@@ -86,6 +87,19 @@ describe("agent calls", () => {
     expect(calls(tx.getData())).toEqual(["vault::charge_fee"]);
     expect(tx.getData().commands[0]?.MoveCall?.arguments).toHaveLength(4);
     expect(() => vt.chargeFee(new Transaction(), { vault: VAULT, tradeCap: TRADE_CAP, amountMist: 0n })).toThrow();
+  });
+
+  it("chargeFees batches many vaults per PTB", () => {
+    const charges = Array.from({ length: 501 }, () => ({ vault: VAULT, tradeCap: TRADE_CAP, amountMist: 1n }));
+    const txs = vt.chargeFees(charges, () => new Transaction(), 250);
+    expect(txs.map((t) => t.getData().commands.length)).toEqual([250, 250, 1]);
+    expect(() => vt.chargeFees(charges, () => new Transaction(), 2_000)).toThrow();
+  });
+
+  it("pauseByAgent passes a non-owner reason", () => {
+    const tx = new Transaction();
+    vt.pauseByAgent(tx, { vault: VAULT, tradeCap: TRADE_CAP, reason: 1 });
+    expect(calls(tx.getData())).toEqual(["vault::pause_by_agent"]);
   });
 
   it("refuses trades without slippage protection", () => {
@@ -185,6 +199,63 @@ describe("BCS layout", () => {
   });
 });
 
+describe("readVaults", () => {
+  it("batches multi-gets and returns per-vault errors instead of throwing", async () => {
+    const content = AgentVaultBcs.serialize({
+      id: VAULT.objectId,
+      owner: USER,
+      trade_cap_id: null,
+      paused: true,
+      limits: {
+        max_trade: 1n,
+        max_per_launch: 2n,
+        max_daily_spend: 3n,
+        max_open_positions: 4n,
+        min_out_required: true,
+      },
+      sui: 7n,
+      tokens: { id: LAUNCH.objectId, size: 0n },
+      day_index: 1n,
+      spent_today: 0n,
+      position_cost: { id: OWNER_CAP, size: 0n },
+      open_positions: 0n,
+      daily_fee_cap: 5n,
+      treasury: TREASURY,
+      last_fee_day: 3n,
+    }).toBytes();
+    const calls: number[] = [];
+    const client = {
+      core: {
+        getObjects: async ({ objectIds }: { objectIds: string[] }) => {
+          calls.push(objectIds.length);
+          return {
+            objects: objectIds.map((id) =>
+              id === "bad"
+                ? new Error("not found")
+                : {
+                    objectId: id,
+                    type: `${PKG.packageId}::vault::AgentVault`,
+                    owner: { $kind: "Shared", Shared: { initialSharedVersion: "7" } },
+                    content,
+                  },
+            ),
+          };
+        },
+      },
+    };
+    const out = await readVaults(client as never, ["a", "b", "bad"], 2);
+    expect(calls).toEqual([2, 1]);
+    expect(out[0]).toMatchObject({
+      suiMist: 7n,
+      paused: true,
+      tradeCapId: null,
+      dailyFeeCapMist: 5n,
+      initialSharedVersion: "7",
+    });
+    expect(out[2]).toBeInstanceOf(Error);
+  });
+});
+
 describe("helpers", () => {
   it("normalizes TypeName strings", () => {
     expect(typeNameToCoinType(`${"3".repeat(64)}::meme::MEME`)).toBe(MEME);
@@ -204,7 +275,7 @@ describe("helpers", () => {
 
   it("describeCreate states custody, limits, fee and risk in plain words", () => {
     const lines = describeCreate({ limits, fees, depositMist: suiToMist(100), operator: OPERATOR }).join("\n");
-    expect(lines).toContain("up to 0.200 SUI per day while the agent is running, free for the first 7 days");
+    expect(lines).toContain("up to 0.200 SUI per day while the agent is running, free for the first 3 days");
     expect(lines).toContain("100.000 SUI");
     expect(lines).toContain("It cannot withdraw.");
     expect(lines).toContain("5.000 SUI per trade");

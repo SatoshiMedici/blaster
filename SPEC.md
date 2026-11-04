@@ -13,7 +13,7 @@ Last updated: 4 Nov 2026 · Owner: Mário (COO, Blast)
 A web app on top of **Blast** (launchpad and social trading on Sui) where a user:
 
 1. connects a Sui wallet,
-2. picks an AI model to trade for them (Claude or ChatGPT; more later),
+2. picks an AI model to trade for them (Claude or ChatGPT, both through OpenRouter; more later),
 3. sets their risk limits,
 4. deposits SUI into **their own on-chain agent vault** and authorizes the agent to trade from it,
 5. watches the agent trade Blast launches, with every decision and its reasoning shown,
@@ -60,7 +60,7 @@ There is no API key, no second token, no top-up screen and no separate gas balan
 ### Billing: a flat daily fee, taken automatically from the vault
 
 - **Price:** a flat **daily fee while the agent is running**, in SUI. It covers the AI model cost, gas for agent trades, and margin. A paused or closed vault pays nothing.
-- **First 7 days free:** Blast covers them, to remove friction at signup.
+- **First 3 days free** (once per wallet, minimum deposit required). See "Pricing and unit economics".
 - **On-chain mechanics:**
   - The vault stores `daily_fee_cap` (MIST), which the user approves at creation and sees on the Start screen ("up to X SUI per day while running").
   - A `charge_fee(vault, trade_cap, amount, clock)` function sends at most `daily_fee_cap` per calendar day to a **fixed treasury address set at creation**.
@@ -76,6 +76,65 @@ There is no API key, no second token, no top-up screen and no separate gas balan
 - **Edge cases:**
   - If the vault holds too little SUI for the fee, the agent sells nothing to pay it. It pauses itself and the user gets a "top up or withdraw" notice.
   - Fee changes only apply to new vaults, or to existing ones after the user re-approves.
+
+### Pricing and unit economics (locked; revisit after the arena)
+
+**Price:** **$0.99 per day while running**, charged in SUI at that day's SUI/USD rate. Paused or closed vaults pay nothing. Minimum deposit: **$250 equivalent in SUI**.
+
+**Cost controls (these make every vault profitable):**
+1. **No AI for screening.** Plain code watches the market and only calls the model on a trigger:
+   - a new launch,
+   - a curve crossing 50% or 80% progress,
+   - a held position moving more than 10%,
+   - a scheduled check every 4 hours.
+2. **Hard cap: 30 AI decisions per vault per day**, enforced in the worker. Past the cap, the agent holds until the next day.
+3. **Prompt caching:** the market part of the prompt is identical for every vault in a tick. Send it as a stable prefix so cached input is cheaper.
+4. **Global spend guards:**
+   - an OpenRouter key spend limit,
+   - a daily platform AI budget with a kill switch,
+   - a low-credit alert at 7 days of spend.
+
+**Cost per vault per day** (`anthropic/claude-sonnet-5.5` and `openai/gpt-6.1-sol` at $2 / $10 per 1M tokens, about 6k input and 500 output tokens per decision, plus about 6% OpenRouter fees, which comes to about $0.018 per decision):
+
+| Day | AI decisions | AI cost | Gas | Total cost | Fee | Margin |
+| --- | --- | --- | --- | --- | --- | --- |
+| Quiet | 10 | $0.18 | about $0.03 | $0.21 | $0.99 | 79% |
+| Typical | 20 | $0.36 | about $0.05 | $0.41 | $0.99 | 59% |
+| Busy (cap) | 30 | $0.54 | about $0.08 | $0.62 | $0.99 | 37% |
+
+**Rule:** the worst-case day must keep at least a 30% margin.
+- If the measured average cost per decision rises above $0.022, lower the decision cap or raise the fee.
+- The worker logs cost per decision (from OpenRouter usage) so this is checked weekly.
+
+**Collection rules (no bad debt):**
+- The fee is charged **at the start of each day** (prepaid).
+- If the vault can't pay, the agent pauses itself. It never sells positions to pay the fee.
+- The on-chain `daily_fee_cap` is set at about 2× the current fee in SUI, so SUI price swings don't block collection. The operator charges only the day's USD-equivalent.
+
+**Free trial:** **3 days**, once per wallet, and only for vaults that meet the minimum deposit. That costs about $1.20 per signup.
+
+**Monthly economics per active vault:**
+
+| Item | Value |
+| --- | --- |
+| Revenue | about $29.70 (30 days × $0.99) |
+| AI + gas cost (typical) | about $12.30 |
+| **Contribution** | **about $17 per vault per month (about 57%)** |
+
+**Break-even** (fixed costs are estimates; replace them with real quotes):
+
+| Fixed cost | Per month |
+| --- | --- |
+| Servers, Postgres, Redis, RPC provider, monitoring | about $1,000 |
+| Vault contract audit, amortized over 12 months (estimate: $25k one-off) | about $2,100 |
+| **Total** | **about $3,100** |
+
+- **Break-even at about 185 active paid vaults.**
+- Excluding the audit, about 60 vaults.
+
+**Upside not counted above:**
+- Blast's own protocol share of trade fees on all agent volume. This is real revenue to Blast at whatever rates are live.
+- A future premium tier (faster checks, larger models such as `openai/gpt-6-astra`) priced at the same ≥30% worst-case margin.
 
 ### Seamless details
 
@@ -128,7 +187,7 @@ There is no API key, no second token, no top-up screen and no separate gas balan
    - mints a TradeCap to our operator address.
 
    Show the user exactly what they're signing in plain words.
-7. **Live.** Redirect to the dashboard. The first tick runs within one minute.
+7. **Live.** Redirect to the dashboard. Vault creation counts as a trigger, so the first AI decision appears within about a minute.
 
 ### 3.2 Dashboard (per user)
 
@@ -166,7 +225,7 @@ There is no API key, no second token, no top-up screen and no separate gas balan
 └─────┬──────┘                │  └ blast_agent_vault (ours)
       │ REST/WS               └────────▲─────────┘
 ┌─────▼──────┐   tick jobs   ┌─────────┴────────┐
-│  API       │ ────────────► │ Agent workers     │──► Anthropic / OpenAI
+│  API       │ ────────────► │ Agent workers     │──► OpenRouter (Claude, GPT)
 │ (Node)     │◄──── events ──│ (agent-core)      │
 └─────┬──────┘               └─────────┬────────┘
       │                                │ sign via KMS (TradeCap holder key)
@@ -180,6 +239,7 @@ There is no API key, no second token, no top-up screen and no separate gas balan
 | Web app | Next.js 16 (App Router), TypeScript, Tailwind, `@mysten/dapp-kit-react`, TanStack Query, Recharts | Blast design tokens: canvas `#0D1117`, punch `#FF4C98`, deep `#F12D82`, kicker `#EFA1C9`, border `#28333F`, muted `#8E9CAB`, font Inter |
 | API | Node 22, Fastify or Next route handlers, zod validation | Session auth from a signed wallet message (no passwords) |
 | Agent workers | `packages/agent-core` from `blast-arena-agent`, BullMQ + Redis for the tick queue | One job per vault per tick; concurrency-limited per model provider |
+| Model API | OpenRouter (OpenAI-compatible) | One key for every model; credits paid in USDC |
 | Signing | Operator key in a KMS (AWS KMS or GCP KMS, Ed25519/secp256k1 supported by Sui; `@mysten/kms` exists) | The key never lives in app memory or env files in production |
 | Indexer | Polls Sui events (`listEvents`) for Blast launch events and our vault events → Postgres | Rebuildable from chain |
 | DB | Postgres 16 | Schema in section 8 |
@@ -189,7 +249,7 @@ SDKs:
 - `@interest-protocol/blast-launchpad-sdk` (0.1.2+): launch state, previews, tx builders, event decoding
 - `@interest-protocol/blast-deployments-sdk` (0.1.4+): `MAINNET_LAUNCHPAD_DEPLOYMENT`
 - `@mysten/sui` v2: `SuiGrpcClient`, `Transaction`
-- `@anthropic-ai/sdk`, `openai`
+- `openai` SDK pointed at OpenRouter (`baseURL: https://openrouter.ai/api/v1`, key `OPENROUTER_API_KEY`)
 
 Reference sources:
 - [blast-v2-contracts](https://github.com/interest-protocol/blast-v2-contracts) (`docs/llms/launchpad.md` covers the curve; `llms.txt` is the map)
@@ -308,20 +368,31 @@ Reuse `blast-arena-agent`. Changes:
 | Decision | Same strict JSON schema: `buy`, `sell` or hold. Remove `join_opening_round` for vaults (5.4) |
 | Risk check | Mirror the on-chain limits off-chain (so rejections are explained), plus the drawdown stop and a slippage of 3% by default |
 | Execution | Build a PTB calling `blast_agent_vault::buy/sell`, simulate, then sign via KMS and submit. Never sign if the simulation fails |
-| Cadence | Tick every 60 s per vault, staggered. Skip the LLM call when nothing changed for that vault (no new launches, no price move > 5% on held positions) to save cost |
+| Cadence | Rule-based triggers check every 60 s; the LLM is called only on a trigger (see 1b) and at most 30 times per vault per day |
 | Timeouts | 90 s per model call; a timeout counts as a hold |
 | Logging | Every decision, verdict and tx goes to Postgres (`decisions`, `trades`) |
 
 ### 6.1 Models
 
-| Option in UI | Model ID | Provider | Notes |
+All models run through **OpenRouter**: one API key, one bill, with credits topped up in **USDC** (crypto). Calls use the OpenAI-compatible Chat Completions endpoint `POST https://openrouter.ai/api/v1/chat/completions` with `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }`.
+
+| Option in UI | OpenRouter slug | Price (in / out per 1M tokens) | Notes |
 | --- | --- | --- | --- |
-| Claude | `claude-sonnet-5-5` | Anthropic | Structured output via `output_config.format` (JSON schema) |
-| ChatGPT | `gpt-6.1-sol` | OpenAI | Responses API, `text.format` JSON schema, `strict: true` |
+| Claude | `anthropic/claude-sonnet-5.5` | $2 / $10 | Same price class as GPT-6.1 Sol |
+| ChatGPT | `openai/gpt-6.1-sol` | $2 / $10 typical (varies by provider) | Pin the provider in OpenRouter routing so cost is stable |
+
+- Adding a model (e.g. Grok) is only a new slug in config, with no code change.
+- Billing ops:
+  - Keep the OpenRouter credit balance topped up in USDC by hand. Crypto top-ups are manual and non-refundable, and carry about a 5% fee.
+  - Set a low-balance alert at about 7 days of spend.
+  - If the balance runs out, model calls fail, and failures count as **hold** (no trading, no fund risk).
+- Data:
+  - Prompts contain only public market data and the vault's own positions. Never send keys, emails or other user PII to the model.
+  - Turn off any OpenRouter setting that allows providers to train on prompts.
 
 - Same system prompt, same snapshot and same limits for both. The prompt is in `agent-core/src/traders.ts`.
-- Model IDs come from config, so they can be swapped without a deploy. Confirm the IDs are enabled on our accounts before launch.
-- Later: Grok (`grok-4.7` via the OpenAI-compatible endpoint `https://api.x.ai/v1`) behind the same `Trader` interface.
+- Model slugs come from config, so they can be swapped without a deploy. Confirm both slugs respond on our OpenRouter account before launch.
+- Later: Grok or others: just another OpenRouter slug behind the same `Trader` interface.
 
 ### 6.2 Prompt-injection rule
 
@@ -378,7 +449,7 @@ launches(launch_id, meme_type, symbol, lifecycle, graduated_at, ...)        -- f
 ### 9.1 Rules that keep it honest
 
 - **Use time-weighted return (TWR)**, so deposits and withdrawals don't count as profit or loss. Compute it from `vault_snapshots` and `cashflows`.
-- **Eligibility for ranking:** vault age ≥ 7 days, deposit ≥ a minimum (e.g. 20 SUI), and at least 5 trades in the period. This stops tiny or lucky vaults topping the board.
+- **Eligibility for ranking:** vault age ≥ 7 days, deposit ≥ the $250 minimum, and at least 5 trades in the period. This stops tiny or lucky vaults topping the board.
 - **Periods:** 7d, 30d, all-time. Default 30d.
 - Show **losses as clearly as gains.** No "earn" language.
 - Users choose to appear by address, a short alias or hidden. Default is a short alias (`0x12…ab`).
@@ -459,7 +530,7 @@ launches(launch_id, meme_type, symbol, lifecycle, graduated_at, ...)        -- f
 - [ ] TradeCap functions can't move funds out of the vault (unit tests prove it).
 - [ ] The owner can always withdraw, even when paused, revoked or the backend is down.
 - [ ] Every trade is simulated before signing; there's a hard cap on gas per tx.
-- [ ] Per-provider rate limits and a daily LLM budget, with alerts.
+- [ ] An OpenRouter spend limit per key, a daily LLM budget, and a low-credit alert.
 - [ ] A global kill switch: stop all ticks (backend) and a pause-all runbook.
 - [ ] Untrusted creator text is isolated in prompts (6.2).
 - [ ] An external audit of `blast_agent_vault` before real users.
@@ -481,7 +552,7 @@ launches(launch_id, meme_type, symbol, lifecycle, graduated_at, ...)        -- f
 
 ## 12. Open decisions (for Mário and Jose)
 
-- [x] User fee model: **flat daily fee from the vault, first 7 days free** (section 1b). Still open: the exact SUI amount, set once real AI cost per vault per day is measured in the arena phase.
+- [x] User fee model: **$0.99/day while running, charged in SUI, 3-day trial, $250 minimum deposit** (section 1b). Revisit after the arena with measured costs.
 - [ ] Minimum and maximum deposit per vault.
 - [ ] Final risk preset numbers.
 - [ ] Whether to keep opening rounds and presales out of v1, or ask for a Blast change that lets a caller name the recipient (5.4).

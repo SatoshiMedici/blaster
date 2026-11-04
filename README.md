@@ -1,6 +1,6 @@
 # Blast Agents
 
-An AI agent (Claude or ChatGPT) trades [Blast](https://blast.fun) launches on Sui **from the user's own on-chain vault**. Users keep custody: the agent can trade, but it can never withdraw. The only other outflow is a capped flat daily fee, approved by the user and paid on-chain to a fixed treasury. Limits are enforced on-chain, and the user can pause, revoke or withdraw at any time, even if our backend is down.
+An AI agent (Claude or ChatGPT, both via OpenRouter) trades [Blast](https://blast.fun) launches on Sui **from the user's own on-chain vault**. Users keep custody: the agent can trade, but it can never withdraw. The only other outflow is a capped flat daily fee, approved by the user and paid on-chain to a fixed treasury. Limits are enforced on-chain, and the user can pause, revoke or withdraw at any time, even if our backend is down.
 
 > **Status: early build, nothing deployed.** The Move vault is implemented and unit-tested but not published or audited. No mainnet transaction has been signed. See [docs/PROGRESS.md](docs/PROGRESS.md).
 >
@@ -8,13 +8,15 @@ An AI agent (Claude or ChatGPT) trades [Blast](https://blast.fun) launches on Su
 
 ## Documents
 
-| Doc                                          | What it covers                                                |
-| -------------------------------------------- | ------------------------------------------------------------- |
-| [SPEC.md](SPEC.md)                           | The product and build spec (source of truth)                  |
-| [docs/PROGRESS.md](docs/PROGRESS.md)         | Build-order status, deviations from the spec, open items      |
-| [docs/SECURITY.md](docs/SECURITY.md)         | Custody model, threat model, trust assumptions, what's tested |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components and how a tick flows                               |
-| [CONTRIBUTING.md](CONTRIBUTING.md)           | Setup, conventions, checks to run before a PR                 |
+| Doc                                                                                    | What it covers                                                                  |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [SPEC.md](SPEC.md)                                                                     | The product and build spec (source of truth)                                    |
+| [docs/PROGRESS.md](docs/PROGRESS.md)                                                   | Build-order status, deviations from the spec, open items                        |
+| [docs/SECURITY.md](docs/SECURITY.md)                                                   | Custody model, threat model, trust assumptions, what's tested                   |
+| [docs/ECONOMICS.md](docs/ECONOMICS.md)                                                 | Unit economics: costs, margins, break-even, where each rule is enforced in code |
+| [reports/Blast Agents unit economics.md](reports/Blast%20Agents%20unit%20economics.md) | Full sourced research report on cost and profitability                          |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                                           | Components and how a tick flows                                                 |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                                     | Setup, conventions, checks to run before a PR                                   |
 
 ## Repository layout
 
@@ -27,7 +29,7 @@ packages/
   agent-core/          Market snapshot, model adapters, risk check, executor (from blast-arena-agent)
   vault-sdk/           TypeScript PTB builders and readers for the vault      (step 3)
 move/
-  blast_agent_vault/   The Sui Move vault: OwnerCap / TradeCap, on-chain limits and daily fee, 55 unit tests
+  blast_agent_vault/   The Sui Move vault: OwnerCap / TradeCap, on-chain limits and daily fee, 60 unit tests
   vendor/blast/        Blast launchpad source at the canonical mainnet commit (read-only)
 scripts/
   check_trade_cap_surface.py   CI custody guard: no TradeCap function may return value; the fee is the only outflow

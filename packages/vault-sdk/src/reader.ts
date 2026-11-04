@@ -50,19 +50,26 @@ async function readTypeNameMap(client: ClientWithCoreApi, parentId: string): Pro
   return out;
 }
 
-/** Reads a vault, its token balances and position costs from chain. */
-export async function readVault(client: ClientWithCoreApi, vaultId: string): Promise<VaultState> {
-  const { object } = await client.core.getObject({ objectId: vaultId, include: { content: true } });
-  if (!object.type.endsWith("::vault::AgentVault")) throw new Error(`${vaultId} is not an AgentVault (${object.type})`);
+type VaultObject = {
+  objectId: string;
+  type: string;
+  owner: { $kind: string; Shared?: { initialSharedVersion: string | number } };
+  content: Uint8Array;
+};
+
+async function toVaultState(client: ClientWithCoreApi, object: VaultObject): Promise<VaultState> {
+  if (!object.type.endsWith("::vault::AgentVault"))
+    throw new Error(`${object.objectId} is not an AgentVault (${object.type})`);
   const v = decodeVault(object.content);
+  // Dynamic fields are only read when the vault actually holds something.
   const [tokens, positionCostMist] = await Promise.all([
     v.tokens.size === "0" ? new Map<string, bigint>() : readTypeNameMap(client, v.tokens.id),
     v.position_cost.size === "0" ? new Map<string, bigint>() : readTypeNameMap(client, v.position_cost.id),
   ]);
-  const owner = object.owner;
   return {
     objectId: v.id,
-    initialSharedVersion: owner.$kind === "Shared" ? String(owner.Shared.initialSharedVersion) : null,
+    initialSharedVersion:
+      object.owner.$kind === "Shared" && object.owner.Shared ? String(object.owner.Shared.initialSharedVersion) : null,
     owner: v.owner,
     tradeCapId: v.trade_cap_id ?? null,
     paused: v.paused,
@@ -83,6 +90,38 @@ export async function readVault(client: ClientWithCoreApi, vaultId: string): Pro
     treasury: v.treasury,
     lastFeeDay: BigInt(v.last_fee_day),
   };
+}
+
+/** Reads a vault, its token balances and position costs from chain. */
+export async function readVault(client: ClientWithCoreApi, vaultId: string): Promise<VaultState> {
+  const { object } = await client.core.getObject({ objectId: vaultId, include: { content: true } });
+  return toVaultState(client, object as unknown as VaultObject);
+}
+
+/**
+ * Reads many vaults with batched multi-gets (`perRequest` objects per call) instead of one call
+ * per vault: RPC is the fixed cost that grows with vault count (docs/ECONOMICS.md).
+ * Missing or non-vault objects are returned as errors, not thrown.
+ */
+export async function readVaults(
+  client: ClientWithCoreApi,
+  vaultIds: string[],
+  perRequest = 50,
+): Promise<Array<VaultState | Error>> {
+  const out: Array<VaultState | Error> = [];
+  for (let i = 0; i < vaultIds.length; i += perRequest) {
+    const { objects } = await client.core.getObjects({
+      objectIds: vaultIds.slice(i, i + perRequest),
+      include: { content: true },
+    });
+    const states = await Promise.all(
+      objects.map((o) =>
+        o instanceof Error ? o : toVaultState(client, o as unknown as VaultObject).catch((e: Error) => e),
+      ),
+    );
+    out.push(...states);
+  }
+  return out;
 }
 
 const dayOf = (nowMs: number) => BigInt(Math.floor(nowMs / 86_400_000));

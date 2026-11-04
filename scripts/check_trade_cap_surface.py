@@ -94,7 +94,7 @@ def main(path: str) -> int:
         if not re.search(rf"public\(package\)\s+fun\s+{internal}\b", src):
             errors.append(f"{internal} must stay public(package)")
 
-    for expected in ("buy", "sell", "charge_fee", "destroy_trade_cap"):
+    for expected in ("buy", "sell", "charge_fee", "pause_by_agent", "destroy_trade_cap"):
         if expected not in checked:
             errors.append(f"expected `{expected}` to take a TradeCap")
 

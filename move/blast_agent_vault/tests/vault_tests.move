@@ -788,3 +788,55 @@ fun owner_withdraws_everything_regardless_of_fees() {
     give_back(v, owner_cap, trade_cap);
     finish(scenario, clock);
 }
+
+// === Agent self-pause (SPEC 1b) ===
+
+#[test]
+fun agent_pauses_itself_and_only_the_owner_resumes() {
+    let (scenario, clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.pause_by_agent(&trade_cap, 1);
+    assert!(v.is_paused());
+    v.resume(&owner_cap);
+    buy<MEME_A>(&mut v, &trade_cap, ONE, 1, 1, 0, &clock);
+    give_back(v, owner_cap, trade_cap);
+    finish(scenario, clock);
+}
+
+#[test, expected_failure(abort_code = vault::EPaused)]
+fun agent_pause_blocks_its_own_trades() {
+    let (scenario, clock) = setup(100 * ONE);
+    let (mut v, _owner_cap, trade_cap) = take(&scenario);
+    v.pause_by_agent(&trade_cap, 2);
+    buy<MEME_A>(&mut v, &trade_cap, ONE, 1, 1, 0, &clock);
+    abort 99
+}
+
+#[test, expected_failure(abort_code = vault::EInvalidPauseReason)]
+fun agent_cannot_claim_to_be_the_owner() {
+    let (scenario, _clock) = setup(100 * ONE);
+    let (mut v, _owner_cap, trade_cap) = take(&scenario);
+    v.pause_by_agent(&trade_cap, 0);
+    abort 99
+}
+
+#[test, expected_failure(abort_code = vault::EAgentNotAuthorized)]
+fun revoked_agent_cannot_pause() {
+    let (scenario, _clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.revoke_agent(&owner_cap);
+    v.pause_by_agent(&trade_cap, 1);
+    abort 99
+}
+
+#[test]
+fun owner_withdraws_after_agent_pause() {
+    let (mut scenario, clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.pause_by_agent(&trade_cap, 1);
+    let all = v.withdraw_all_sui(&owner_cap, scenario.ctx());
+    assert_eq!(all.value(), 100 * ONE);
+    destroy(all);
+    give_back(v, owner_cap, trade_cap);
+    finish(scenario, clock);
+}

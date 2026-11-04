@@ -254,6 +254,37 @@ export class VaultTransactions {
     });
   }
 
+  /**
+   * Charges many vaults' daily fees in as few PTBs as possible: one sender holds every TradeCap.
+   * Sui allows 1,024 commands per PTB; `perTx` (default 250) leaves room and limits the blast
+   * radius of one failing vault (dry-run each batch first; drop failing vaults and rebuild).
+   */
+  chargeFees(
+    charges: Array<{ vault: SharedObject; tradeCap: ObjectInput; amountMist: bigint }>,
+    newTx: () => Transaction,
+    perTx = 250,
+  ) {
+    if (perTx < 1 || perTx > 1_000) throw new Error("perTx must be 1..1000");
+    const txs: Transaction[] = [];
+    for (let i = 0; i < charges.length; i += perTx) {
+      const tx = newTx();
+      for (const c of charges.slice(i, i + perTx)) this.chargeFee(tx, c);
+      txs.push(tx);
+    }
+    return txs;
+  }
+
+  /**
+   * `vault::pause_by_agent`: the agent stops itself (can't pay the fee, drawdown stop). Only the
+   * owner can resume. `reason`: 1 = fee unpaid, 2 = drawdown stop, 3 = other halt.
+   */
+  pauseByAgent(tx: Transaction, args: { vault: SharedObject; tradeCap: ObjectInput; reason: 1 | 2 | 3 }) {
+    return tx.moveCall({
+      target: this.#target("pause_by_agent"),
+      arguments: [this.#shared(tx, args.vault, true), this.#obj(tx, args.tradeCap), tx.pure.u8(args.reason)],
+    });
+  }
+
   /** `vault::sell<Meme>`: sells `memeAmount` from the vault into the launch's curve. */
   sell(
     tx: Transaction,

@@ -34,7 +34,7 @@ export const LIMITS = {
 };
 
 export type AgentConfig = {
-  name: "claude" | "chatgpt";
+  name: string;
   model: string;
   secretKey: string | undefined;
 };
@@ -42,12 +42,12 @@ export type AgentConfig = {
 export const AGENTS: AgentConfig[] = [
   {
     name: "claude",
-    model: env("CLAUDE_MODEL", "claude-sonnet-5-5"),
+    model: env("CLAUDE_MODEL", "anthropic/claude-sonnet-5.5"),
     secretKey: process.env.CLAUDE_SUI_SECRET_KEY,
   },
   {
     name: "chatgpt",
-    model: env("OPENAI_MODEL", "gpt-6.1-sol"),
+    model: env("OPENAI_MODEL", "openai/gpt-6.1-sol"),
     secretKey: process.env.CHATGPT_SUI_SECRET_KEY,
   },
 ];
