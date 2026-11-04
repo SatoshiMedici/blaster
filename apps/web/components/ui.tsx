@@ -78,14 +78,6 @@ export const LiveDot = ({ className }: { className?: string }) => (
   <span aria-hidden className={cx("inline-block size-2 rounded-full bg-gain animate-pulse-dot", className)} />
 );
 
-export function DemoBadge() {
-  return (
-    <Badge tone="warn" className="normal-case tracking-normal">
-      Demo data
-    </Badge>
-  );
-}
-
 export function SectionHeading({
   kicker,
   title,

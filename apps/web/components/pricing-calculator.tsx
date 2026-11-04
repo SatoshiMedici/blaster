@@ -2,8 +2,8 @@
 
 import { ACTIVITY_LEVELS, feeDrag, MODEL_CATALOG, quoteFeeTerms, quotePlan } from "@blast-agents/shared";
 import { useMemo, useState } from "react";
-import { DEMO_SUI_USD } from "@/lib/demo";
 import { cx, pct, usd } from "@/lib/format";
+import { useSuiPrice } from "@/lib/price";
 import { Badge, ButtonLink, Segmented } from "./ui";
 
 type Level = keyof typeof ACTIVITY_LEVELS;
@@ -23,8 +23,10 @@ export function PricingCalculator() {
   const vaultUsd = VAULT_STOPS[stop] ?? 1_000;
   const quote = useMemo(() => quotePlan(modelKey, { level }), [modelKey, level]);
   const drag = feeDrag(quote.priceUsdPerDay, vaultUsd);
-  const terms = quoteFeeTerms(quote.priceUsdPerDay, DEMO_SUI_USD);
-  const capSui = Number(terms.dailyFeeCapMist) / 1e9;
+  const price = useSuiPrice();
+  const capSui = price.data
+    ? Number(quoteFeeTerms(quote.priceUsdPerDay, price.data.price).dailyFeeCapMist) / 1e9
+    : null;
 
   const band = {
     comfortable: { tone: "gain", text: "Comfortable for this vault" },
@@ -133,7 +135,7 @@ export function PricingCalculator() {
         <ul className="space-y-2 text-sm text-muted">
           <li className="flex justify-between gap-4">
             <span>Daily spending limit you sign</span>
-            <span className="num text-ink-2">≈ {capSui.toFixed(2)} SUI</span>
+            <span className="num text-ink-2">{capSui === null ? "—" : `≈ ${capSui.toFixed(2)} SUI`}</span>
           </li>
           <li className="flex justify-between gap-4">
             <span>Paused or closed</span>

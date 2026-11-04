@@ -15,21 +15,23 @@ import {
   settingsToLimits,
   suiToMist,
 } from "@blast-agents/shared";
-import { describeCreate } from "@blast-agents/vault-sdk";
-import { useCurrentAccount } from "@mysten/dapp-kit-react";
+import { describeCreate, VaultTransactions } from "@blast-agents/vault-sdk";
+import { useCurrentAccount, useDAppKit } from "@mysten/dapp-kit-react";
+import { Transaction } from "@mysten/sui/transactions";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, Info, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, ButtonLink, Container, Segmented } from "@/components/ui";
+import { Button, ButtonLink, Container, Segmented } from "@/components/ui";
 import { WalletButton } from "@/components/wallet";
-import { DEMO_SUI_USD } from "@/lib/demo";
-import { cx, pct, sui, usd } from "@/lib/format";
+import { executedDigest, ownedVaults } from "@/lib/chain";
+import { CAN_START, OPERATOR_ADDRESS, TREASURY_ADDRESS, VAULT_PACKAGE } from "@/lib/config";
+import { cx, pct, shortAddr, sui, usd } from "@/lib/format";
+import { useSuiPrice } from "@/lib/price";
 
-/** Placeholders until the vault package is published and the operator / treasury are configured. */
-const OPERATOR = process.env.NEXT_PUBLIC_OPERATOR_ADDRESS ?? `0x${"0".repeat(62)}a1`;
-const TREASURY = process.env.NEXT_PUBLIC_TREASURY_ADDRESS ?? `0x${"0".repeat(62)}b2`;
-const VAULT_PUBLISHED = Boolean(process.env.NEXT_PUBLIC_VAULT_PACKAGE_ID);
+/** Shown in the signing summary until the operator and treasury are configured at launch. */
+const UNASSIGNED = `0x${"0".repeat(64)}`;
 
 type Level = keyof typeof ACTIVITY_LEVELS | "custom";
 const STEPS = ["Connect", "Choose", "Start"] as const;
@@ -51,11 +53,22 @@ export function StartFlow() {
   const [preset, setPreset] = useState<PresetId>("balanced");
   const [depositSui, setDepositSui] = useState("1000");
   const [accepted, setAccepted] = useState(false);
-  const [started, setStarted] = useState(false);
+  const [digest, setDigest] = useState<string | null>(null);
+  const [signing, setSigning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dAppKit = useDAppKit();
+  const price = useSuiPrice();
+  const suiUsd = price.data?.price;
+  // The trial is once per wallet: a wallet that already owns a vault doesn't get free days again.
+  const existing = useQuery({
+    queryKey: ["vaults", account?.address],
+    queryFn: () => ownedVaults(account?.address ?? ""),
+    enabled: Boolean(account && VAULT_PACKAGE),
+  });
 
   const choice: ActivityChoice = level === "custom" ? { level: "custom", decisionsPerDay: custom } : { level };
   const deposit = Math.max(0, Number(depositSui) || 0);
-  const vaultUsd = deposit * DEMO_SUI_USD;
+  const vaultUsd = suiUsd ? deposit * suiUsd : 0;
   const quote = quotePlan(modelKey, choice); // pure and cheap: no memo needed
   const drag = feeDrag(quote.priceUsdPerDay, vaultUsd);
   const suggested = vaultUsd > 0 ? recommendPlan(modelKey, vaultUsd) : null;
@@ -70,23 +83,52 @@ export function StartFlow() {
           )[0]
       : undefined;
   const altModel = alternative ? MODEL_CATALOG.find((m) => m.key === alternative.modelKey) : undefined;
-  const terms = quoteFeeTerms(quote.priceUsdPerDay, DEMO_SUI_USD);
+  const terms = suiUsd ? quoteFeeTerms(quote.priceUsdPerDay, suiUsd) : null;
+  const freeDays = existing.data && existing.data.length > 0 ? 0 : DEFAULT_FREE_DAYS;
+
+  /** Builds the one-signature Start PTB (vault, deposit, limits, fee terms, agent key) and signs it. */
+  const start = async () => {
+    if (!CAN_START || !VAULT_PACKAGE || !account || !terms || !OPERATOR_ADDRESS || !TREASURY_ADDRESS) return;
+    setSigning(true);
+    setError(null);
+    try {
+      const tx = new Transaction();
+      new VaultTransactions(VAULT_PACKAGE).create(tx, {
+        limits,
+        fees: { dailyFeeCapMist: terms.dailyFeeCapMist.toString(), treasury: TREASURY_ADDRESS, freeDays },
+        depositMist,
+        operator: OPERATOR_ADDRESS,
+        owner: account.address,
+      });
+      setDigest(executedDigest(await dAppKit.signAndExecuteTransaction({ transaction: tx })));
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      setError(
+        /reject|denied|cancel/i.test(msg)
+          ? "You declined the transaction in your wallet."
+          : msg || "The transaction failed.",
+      );
+    } finally {
+      setSigning(false);
+    }
+  };
   const depositMist = deposit > 0 ? suiToMist(depositSui) : 0n;
   const limits = settingsToLimits(RISK_PRESETS[preset].settings, depositMist);
   const model = MODEL_CATALOG.find((m) => m.key === modelKey) ?? MODEL_CATALOG[0];
 
-  if (started) return <Started modelLabel={model?.label ?? ""} price={quote.priceUsdPerDay} />;
+  if (digest) return <Started modelLabel={model?.label ?? ""} price={quote.priceUsdPerDay} digest={digest} />;
 
   return (
     <Container className="py-12 sm:py-16">
       <Stepper step={step} onStep={(s) => (s <= step ? setStep(s) : undefined)} />
 
-      {!VAULT_PUBLISHED ? (
+      {!CAN_START ? (
         <div className="mx-auto mt-6 flex max-w-3xl items-start gap-3 rounded-2xl border border-warn/20 bg-warn/[0.06] px-4 py-3 text-sm text-ink-2">
           <Info className="mt-0.5 size-4 shrink-0 text-warn" />
           <p>
-            <span className="font-medium text-ink">Preview.</span> The vault contract isn't published yet, so nothing is
-            signed or deposited. Prices and limits below are computed exactly as they will be at launch.
+            <span className="font-medium text-ink">Vaults aren't open yet.</span> The vault contract is being audited
+            and isn't deployed, so you can explore plans and prices but can't start an agent. Nothing can be deposited
+            until launch.
           </p>
         </div>
       ) : null}
@@ -249,7 +291,7 @@ export function StartFlow() {
                 </button>
               </div>
               <p className="num mt-2 text-xs text-muted">
-                ≈ {usd(vaultUsd, 0)} at {usd(DEMO_SUI_USD)}/SUI
+                {suiUsd ? `≈ ${usd(vaultUsd, 0)} at ${usd(suiUsd, 4)}/SUI (live)` : "Fetching SUI price…"}
               </p>
             </Block>
           </div>
@@ -321,7 +363,9 @@ export function StartFlow() {
                 <Row label="Max per launch">{sui(Number(limits.maxPerLaunch) / 1e9)}</Row>
                 <Row label="Max spend per day">{sui(Number(limits.maxDailySpend) / 1e9)}</Row>
                 <Row label="Open positions">{limits.maxOpenPositions}</Row>
-                <Row label="Daily spending limit (fee cap)">≈ {sui(Number(terms.dailyFeeCapMist) / 1e9)}</Row>
+                <Row label="Daily spending limit (fee cap)">
+                  {terms ? `≈ ${sui(Number(terms.dailyFeeCapMist) / 1e9)}` : "—"}
+                </Row>
                 <Button size="lg" className="mt-2 w-full" disabled={deposit <= 0} onClick={() => setStep(2)}>
                   Review and start <ArrowRight className="size-4" />
                 </Button>
@@ -338,12 +382,12 @@ export function StartFlow() {
             {describeCreate({
               limits,
               fees: {
-                dailyFeeCapMist: terms.dailyFeeCapMist.toString(),
-                treasury: TREASURY,
-                freeDays: DEFAULT_FREE_DAYS,
+                dailyFeeCapMist: (terms?.dailyFeeCapMist ?? 0n).toString(),
+                treasury: TREASURY_ADDRESS ?? UNASSIGNED,
+                freeDays,
               },
               depositMist,
-              operator: OPERATOR,
+              operator: OPERATOR_ADDRESS ?? UNASSIGNED,
               priceUsdPerDay: quote.priceUsdPerDay,
             }).map((line, i) => (
               <li key={line} className="flex gap-4 px-6 py-4 text-sm leading-relaxed text-ink-2">
@@ -366,10 +410,20 @@ export function StartFlow() {
             <Button variant="ghost" onClick={() => setStep(1)}>
               <ArrowLeft className="size-4" /> Back
             </Button>
-            <Button size="lg" disabled={!accepted} onClick={() => setStarted(true)}>
-              {VAULT_PUBLISHED ? "Sign and start" : "Start (preview)"} <ArrowRight className="size-4" />
-            </Button>
+            {CAN_START && !account ? (
+              <WalletButton size="lg" label="Connect to start" />
+            ) : (
+              <Button size="lg" disabled={!CAN_START || !accepted || !terms || signing} onClick={start}>
+                {!CAN_START ? "Opens at launch" : signing ? "Confirm in wallet…" : "Sign and start"}
+                <ArrowRight className="size-4" />
+              </Button>
+            )}
           </div>
+          {error ? (
+            <p role="alert" className="mt-4 text-sm text-loss">
+              {error}
+            </p>
+          ) : null}
         </section>
       ) : null}
     </Container>
@@ -432,21 +486,25 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-function Started({ modelLabel, price }: { modelLabel: string; price: number }) {
+function Started({ modelLabel, price, digest }: { modelLabel: string; price: number; digest: string }) {
   return (
     <Container className="py-20">
       <div className="card mx-auto max-w-lg p-10 text-center animate-rise">
         <span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-gain/10 text-gain">
           <Check className="size-7" />
         </span>
-        <h1 className="mt-6 text-2xl font-semibold tracking-tight">Your agent is reading the market…</h1>
+        <h1 className="mt-6 text-2xl font-semibold tracking-tight">Your vault is live</h1>
         <p className="mt-3 text-sm text-muted">
-          {modelLabel} will make its first decision in about a minute. {usd(price)}/day after the free days; pause any
-          time.
+          {modelLabel} will start reading the market. {usd(price)}/day after any free days; pause or withdraw any time.
         </p>
-        <Badge tone="warn" className="mt-5">
-          Preview · nothing was signed
-        </Badge>
+        <a
+          href={`https://suiscan.xyz/mainnet/tx/${digest}`}
+          target="_blank"
+          rel="noreferrer"
+          className="num mt-4 inline-block text-xs text-kicker hover:text-punch"
+        >
+          Transaction {shortAddr(digest)}
+        </a>
         <div className="mt-8 flex justify-center gap-3">
           <ButtonLink href="/dashboard">Open dashboard</ButtonLink>
           <Link href="/" className="inline-flex h-10 items-center px-4 text-sm text-muted hover:text-ink">

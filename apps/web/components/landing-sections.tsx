@@ -1,28 +1,8 @@
 import { MODEL_CATALOG, quotePlan } from "@blast-agents/shared";
-import { ArrowUpRight, Ban, Gauge, KeyRound, Lock, PauseCircle, ShieldCheck, Sparkles, Wallet } from "lucide-react";
+import { Ban, Gauge, KeyRound, Lock, PauseCircle, ShieldCheck, Sparkles, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
-import { DEMO_MODEL_STATS, DEMO_TICKER } from "@/lib/demo";
-import { cx, pct, usd } from "@/lib/format";
-import { Badge, DemoBadge, SectionHeading } from "./ui";
-
-export function Ticker() {
-  const items = [...DEMO_TICKER, ...DEMO_TICKER];
-  return (
-    <div className="relative overflow-hidden border-y border-white/[0.05] bg-black/20 py-3" aria-hidden>
-      <div className="flex w-max animate-marquee gap-10 whitespace-nowrap font-mono text-xs text-muted">
-        {items.map((t, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: duplicated decorative list
-          <span key={i} className="flex items-center gap-3">
-            <span className="size-1 rounded-full bg-punch" />
-            {t}
-          </span>
-        ))}
-      </div>
-      <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-canvas to-transparent" />
-      <div className="pointer-events-none absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-canvas to-transparent" />
-    </div>
-  );
-}
+import { cx, usd } from "@/lib/format";
+import { Badge, SectionHeading } from "./ui";
 
 const STEPS: Array<{ icon: ReactNode; title: string; body: string }> = [
   {
@@ -195,68 +175,6 @@ export function Models() {
           );
         })}
       </div>
-    </section>
-  );
-}
-
-function Spark({ series, positive }: { series: number[]; positive: boolean }) {
-  const min = Math.min(...series);
-  const max = Math.max(...series);
-  const pts = series
-    .map((v, i) => `${(i / (series.length - 1)) * 100},${30 - ((v - min) / (max - min || 1)) * 28}`)
-    .join(" ");
-  return (
-    <svg viewBox="0 0 100 32" className="h-10 w-full" preserveAspectRatio="none" aria-hidden>
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={positive ? "#3ddc97" : "#ff6b6b"}
-        strokeWidth="1.6"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
-  );
-}
-
-export function ModelVsModel() {
-  return (
-    <section>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <SectionHeading kicker="Model vs model" title="Same market, same limits. Different minds." />
-        <DemoBadge />
-      </div>
-      <div className="mt-10 grid gap-4 md:grid-cols-3">
-        {DEMO_MODEL_STATS.map((s) => (
-          <div key={s.key} className="card p-6">
-            <div className="flex items-center justify-between">
-              <p className="font-semibold tracking-tight">{s.label}</p>
-              <span className="font-mono text-[11px] text-faint">{s.vaults} vaults</span>
-            </div>
-            <p className={cx("num mt-5 text-3xl", s.medianTwr >= 0 ? "text-gain" : "text-loss")}>
-              {pct(s.medianTwr, 1, true)}
-            </p>
-            <p className="text-xs text-muted">median 30-day return (TWR)</p>
-            <Spark series={s.series} positive={s.medianTwr >= 0} />
-            <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-white/[0.05] pt-4 text-xs">
-              <div>
-                <dt className="text-faint">In profit</dt>
-                <dd className="num mt-1 text-ink-2">{pct(s.inProfit, 0)}</dd>
-              </div>
-              <div>
-                <dt className="text-faint">Drawdown</dt>
-                <dd className="num mt-1 text-ink-2">{pct(s.medianDrawdown, 0)}</dd>
-              </div>
-              <div>
-                <dt className="text-faint">Holds</dt>
-                <dd className="num mt-1 text-ink-2">{pct(s.holdRatio, 0)}</dd>
-              </div>
-            </dl>
-          </div>
-        ))}
-      </div>
-      <a href="/leaderboard" className="mt-6 inline-flex items-center gap-1 text-sm text-kicker hover:text-punch">
-        Full leaderboard <ArrowUpRight className="size-4" />
-      </a>
     </section>
   );
 }

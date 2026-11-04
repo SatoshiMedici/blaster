@@ -1,6 +1,6 @@
 # `@blast-agents/web`
 
-The Blast Agents web app (SPEC §3, §13 step 7). Next.js 16 (App Router, Turbopack), Tailwind CSS 4, `@mysten/dapp-kit-react`, TanStack Query, Recharts.
+The Blast Agents web app (SPEC §3, §13 step 7). Next.js 16 (App Router, Turbopack), Tailwind CSS 4, `@mysten/dapp-kit-react`, `@mysten/enoki`, TanStack Query, the Blast SDK.
 
 ```bash
 pnpm --filter @blast-agents/web dev
@@ -19,10 +19,15 @@ pnpm --filter @blast-agents/web build
 | `/dashboard`   | Vault value, P&L net of fees, fees paid, plan and today's decision budget, value vs deposits chart with trades marked, positions, the reasoning feed with risk-check verdicts, owner controls, limits                                                                                                                              |
 | `/leaderboard` | TWR, ranked by return per drawdown, eligibility rules, model vs model, biggest wins and worst losses                                                                                                                                                                                                                               |
 
-## What is real and what is preview
+## No mock data
 
-- **Real:** every price, limit, spending limit, fee-drag band, recommendation and signing text. They come from `@blast-agents/shared` and `@blast-agents/vault-sdk`, the same code the API and workers use, so the UI can't drift from billing. Wallet connection is real (dApp Kit, Sui wallet standard).
-- **Preview:** the dashboard, feed and leaderboard use `lib/demo.ts` and carry a **Demo data** badge until the API (step 6) and stats engine (step 8) exist. Start doesn't sign while `NEXT_PUBLIC_VAULT_PACKAGE_ID` is unset; it shows a preview banner. Social sign-in (zkLogin via Enoki) appears once Enoki is configured (see below). X isn't supported by Enoki.
+Every number on the site is real or computed by the same code that bills users. Nothing is simulated.
+
+- **Read live from Sui mainnet in the browser:** the newest Blast launches (`lib/chain.ts`, via the Blast SDK), the connected wallet's SUI balance, and the user's vaults (found by their `OwnerCap`s, decoded by `vault-sdk`).
+- **Live SUI price** from public price APIs (`lib/price.ts`: Binance, CoinGecko fallback).
+- **Prices, limits, spending limits, fee-drag warnings and the signing text** come from `@blast-agents/shared` and `@blast-agents/vault-sdk`.
+- **Real transactions:** Start builds the one-signature create-vault PTB, and the dashboard builds pause, resume, withdraw-everything and revoke PTBs. The wallet signs and executes them.
+- **Until launch:** Start and the vault actions stay disabled until the contract and addresses are configured (`lib/config.ts`). The dashboard shows a launch-status checklist. The leaderboard shows "No eligible vaults yet" until the stats engine has real vaults to rank.
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 import { ArrowRight, ShieldCheck, Timer, Undo2 } from "lucide-react";
-import { AgentTerminal } from "@/components/agent-terminal";
-import { Custody, Faq, HowItWorks, Models, ModelVsModel, Ticker } from "@/components/landing-sections";
+import { Custody, Faq, HowItWorks, Models } from "@/components/landing-sections";
+import { LiveLaunches } from "@/components/live-launches";
 import { PricingCalculator } from "@/components/pricing-calculator";
 import { ButtonLink, Container, SectionHeading } from "@/components/ui";
 
@@ -43,10 +43,9 @@ export default function Home() {
           </div>
           <div className="relative animate-rise [animation-delay:120ms]">
             <div aria-hidden className="absolute -inset-8 -z-10 rounded-[2rem] bg-punch/20 opacity-50 blur-3xl" />
-            <AgentTerminal />
+            <LiveLaunches />
           </div>
         </Container>
-        <Ticker />
       </section>
 
       <Container className="space-y-32 pt-28">
@@ -67,7 +66,6 @@ export default function Home() {
             <PricingCalculator />
           </div>
         </section>
-        <ModelVsModel />
         <Faq />
 
         <section className="card relative overflow-hidden px-6 py-16 text-center sm:px-16">
