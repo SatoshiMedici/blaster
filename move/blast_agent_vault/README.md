@@ -8,8 +8,8 @@ Implements [SPEC §1b and §5](../../SPEC.md#5-move-package-blast_agent_vault). 
 
 | Object | Abilities | Held by | Can do |
 | --- | --- | --- | --- |
-| `AgentVault` | `key` (shared) | — | Holds `Balance<SUI>`, a `Bag` of `Balance<Meme>`, the limits, the spend accounting and the fee terms (`daily_fee_cap`, `treasury`, `last_fee_day`) |
-| `OwnerCap` | `key, store` | the user's wallet | deposit, withdraw, set limits, set fee terms, pause, resume, revoke, re-authorize |
+| `AgentVault` | `key` (shared) | — | Holds `Balance<SUI>`, a `Bag` of `Balance<Meme>`, the limits, the spend accounting, the fee terms (`daily_fee_cap`, `treasury`, `last_fee_day`) and the allowed launchpads (`venues`) |
+| `OwnerCap` | `key, store` | the user's wallet | deposit, withdraw, set limits, set fee terms, set venues, pause, resume, revoke, re-authorize |
 | `TradeCap` | `key, store` | the operator key (KMS) | `buy`, `sell`, and `charge_fee` once a day; nothing else |
 | `Limits` | `copy, drop, store` | inside the vault | `max_trade`, `max_per_launch`, `max_daily_spend` (MIST), `max_open_positions`, `min_out_required` |
 
@@ -25,6 +25,7 @@ Implements [SPEC §1b and §5](../../SPEC.md#5-move-package-blast_agent_vault). 
 | Revoke is instant and on-chain | `revoke_agent` sets `trade_cap_id = none`; every agent call checks `trade_cap_id == some(cap.id)` | `revoked_trade_cap_cannot_buy`, `revoked_trade_cap_cannot_sell`, `replaced_trade_cap_stops_working` |
 | A foreign cap does nothing | Every call checks `cap.vault_id == vault.id` | `trade_cap_of_another_vault_aborts` |
 | Hard caps hold | Checked in `begin_buy` before any SUI leaves the vault | one passing test at each boundary and one aborting test one MIST above it |
+| The agent buys only where the owner allowed | `begin_buy` takes the venue and requires `vault.venues & venue != 0`. Sells are never venue-gated, so a position can always be closed. | `agent_cannot_buy_on_a_venue_the_owner_disabled`, `selling_still_works_after_a_venue_is_disabled` |
 | Slippage protection is mandatory | `min_out > 0` is required, and the received amount is re-checked after the Blast call | `buy_with_zero_min_out_aborts`, `buy_returning_less_than_min_out_aborts`, and the sell equivalents |
 
 ## How a trade runs
@@ -40,9 +41,15 @@ buy<Meme>(vault, trade_cap, launch, package_version, runtime_config, amount, min
 
 The split lets the unit tests run every limit and every accounting path against the real checks, with a simulated curve. A dependent package cannot build a real `Launch` in unit tests, because Blast's `#[test_only]` constructors aren't visible to it. Calling the real curve is covered by a mainnet dev-inspect (SPEC §13 step 2; see [docs/PROGRESS.md](../../docs/PROGRESS.md)).
 
+## Venues
+
+The owner chooses which launchpads the agent may buy on. `venues` is a bitmask: `1` Blast, `2` SuiPump, `3` both. `create` takes it and `set_venues(&OwnerCap)` changes it. Both abort with `EInvalidVenues` on `0` or an unknown bit. Each trade adapter passes its own venue to `begin_buy` (Blast's `buy` passes `VENUE_BLAST`), which aborts with `EVenueNotAllowed` if the owner didn't allow it. Sells skip the check, so removing a venue never traps a position.
+
+Only the Blast adapter exists today. The SuiPump bit can be stored, but nothing calls `begin_buy` with it until a SuiPump adapter is added in a package upgrade (see docs/PROGRESS.md).
+
 ## Daily fee (SPEC §1b)
 
-- `create(limits, daily_fee_cap, treasury, free_days, coin, operator, clock)` is the one-signature Start call. The user approves the fee cap, the treasury and the free period in the same signature that creates the vault.
+- `create(limits, daily_fee_cap, treasury, free_days, venues, coin, operator, clock)` is the one-signature Start call. The user approves the fee cap, the treasury and the free period in the same signature that creates the vault.
 - `last_fee_day` is the last calendar day already paid for or covered by the free period. `create` sets it to `today + free_days − 1`, so with `free_days = 3` (the trial) the creation day and the two days after it are free. The API passes `free_days = 0` when the wallet already used its trial (`trialDaysFor`).
 - `charge_fee(vault, trade_cap, amount, clock)` needs `today > last_fee_day`, `0 < amount ≤ daily_fee_cap`, an authorized and unpaused agent, and enough SUI. It then sets `last_fee_day = today` and pays `vault.treasury`. Skipped days are never back-charged.
 - `set_fee_terms(vault, owner_cap, daily_fee_cap, treasury)` is the owner re-approving new terms. Setting the cap to `0` turns the fee off.
@@ -60,17 +67,19 @@ The split lets the unit tests run every limit and every accounting path against 
 
 ## API
 
-Owner (`&OwnerCap`): `create`, `deposit_sui`, `deposit_token<T>`, `withdraw_sui`, `withdraw_all_sui`, `withdraw_token<T>`, `withdraw_all_token<T>`, `set_limits`, `set_fee_terms`, `pause`, `resume`, `revoke_agent`, `authorize_agent`.
+Owner (`&OwnerCap`): `create`, `deposit_sui`, `deposit_token<T>`, `withdraw_sui`, `withdraw_all_sui`, `withdraw_token<T>`, `withdraw_all_token<T>`, `set_limits`, `set_fee_terms`, `set_venues`, `pause`, `resume`, `revoke_agent`, `authorize_agent`.
 
 Agent (`&TradeCap`): `buy<Meme>`, `sell<Meme>`, `charge_fee`, `pause_by_agent` (stop only, never resume). Anyone holding a TradeCap can also call `destroy_trade_cap`.
 
 Constructor: `new_limits(max_trade, max_per_launch, max_daily_spend, max_open_positions, min_out_required)`. It aborts with `EInvalidLimits` unless `min_out_required` is `true`.
 
-Read-only getters: `sui_value`, `token_value<T>`, `position_cost<T>`, `open_positions`, `spent_today`, `day_index`, `limits`, `is_paused`, `trade_cap_id`, `owner`, `daily_fee_cap`, `treasury`, `last_fee_day`, plus the `Limits` field getters.
+Venue constants: `venue_blast()` (1), `venue_suipump()` (2).
+
+Read-only getters: `sui_value`, `token_value<T>`, `position_cost<T>`, `open_positions`, `spent_today`, `day_index`, `limits`, `is_paused`, `trade_cap_id`, `owner`, `daily_fee_cap`, `treasury`, `last_fee_day`, `venues`, plus the `Limits` field getters.
 
 ### Events
 
-`VaultCreated` (includes the fee terms and `first_fee_day`), `Deposited`, `Withdrawn`, `LimitsChanged`, `Paused { vault_id, reason }` (0 owner, 1 fee unpaid, 2 drawdown stop, 3 other agent halt), `Resumed`, `AgentAuthorized`, `AgentRevoked`, `FeeTermsChanged`, `FeeCharged { vault_id, amount, day, treasury }`, `AgentTraded { vault_id, meme_type, side (0 buy, 1 sell), sui_amount (net), meme_amount, min_out }`.
+`VaultCreated` (includes the fee terms and `first_fee_day`), `Deposited`, `Withdrawn`, `LimitsChanged`, `Paused { vault_id, reason }` (0 owner, 1 fee unpaid, 2 drawdown stop, 3 other agent halt), `Resumed`, `AgentAuthorized`, `AgentRevoked`, `FeeTermsChanged`, `VenuesChanged { vault_id, venues }`, `FeeCharged { vault_id, amount, day, treasury }`, `AgentTraded { vault_id, meme_type, side (0 buy, 1 sell), sui_amount (net), meme_amount, min_out }`.
 
 ### Abort codes
 
@@ -93,6 +102,8 @@ Read-only getters: `sui_value`, `token_value<T>`, `position_cost<T>`, `open_posi
 | 14 | `EFeeNotDue` | Today's fee was already charged, or today is in the free period |
 | 15 | `EExceedsDailyFeeCap` | Fee above `daily_fee_cap` |
 | 16 | `EInvalidPauseReason` | `pause_by_agent` with reason 0 (owner) or above 3 |
+| 17 | `EInvalidVenues` | `venues` is 0 or has a bit other than Blast (1) and SuiPump (2) |
+| 18 | `EVenueNotAllowed` | Buy on a launchpad the owner didn't allow |
 
 ## Differences from the SPEC
 

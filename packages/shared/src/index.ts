@@ -8,3 +8,4 @@ export * from "./models.ts";
 export * from "./pricing.ts";
 export * from "./referrals.ts";
 export * from "./units.ts";
+export * from "./venues.ts";

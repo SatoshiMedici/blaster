@@ -46,6 +46,8 @@ export function describeCreate(args: {
   operator: string;
   /** The plan's daily price (from `quotePlan`), shown next to the spending limit. */
   priceUsdPerDay?: number;
+  /** Venue names the agent may buy on, e.g. ["Blast"]. */
+  venueLabels?: string[];
 }): string[] {
   const { limits } = args;
   return [
@@ -53,6 +55,11 @@ export function describeCreate(args: {
     "You receive the owner key (OwnerCap): only it can withdraw, change limits, pause or revoke.",
     `The agent's operator (${short(args.operator)}) receives a trade-only key (TradeCap). It can buy and sell Blast launches with the vault's funds. It cannot withdraw.`,
     `On-chain limits: at most ${sui(limits.maxTrade)} per trade, ${sui(limits.maxPerLaunch)} per launch, ${sui(limits.maxDailySpend)} per day, ${limits.maxOpenPositions} open positions. Every trade needs slippage protection.`,
+    ...(args.venueLabels?.length
+      ? [
+          `The agent may buy only on ${args.venueLabels.join(" and ")}. You can change this later; it can always sell what it holds.`,
+        ]
+      : []),
     describeFee(args.fees, args.priceUsdPerDay),
     "You can withdraw at any time, even while the agent is paused or our service is down.",
     "You can lose all of the funds in your vault.",

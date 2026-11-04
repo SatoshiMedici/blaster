@@ -25,7 +25,7 @@ apps/api ─┼──► packages/vault-sdk ──► packages/shared
 ## One tick for one vault
 
 1. **Snapshot:** built once per tick for all launches, and shared by every vault's job.
-2. **Vault view:** SUI balance and token balances, read from the vault object.
+2. **Vault view:** SUI balance, token balances and the allowed venues, read from the vault object. Launches on venues the owner didn't allow are screened out before the model sees them (held positions stay, so they can be sold).
 3. **Decide:** the model returns the strict JSON `Decision` (`buy` / `sell` / hold). A timeout, an error or invalid output counts as hold.
 4. **Risk check:** plain code. It mirrors the on-chain limits so rejections can be explained, applies the drawdown stop, and sets `min_out` from a fresh preview minus slippage.
 5. **Execute:** build a `blast_agent_vault::buy/sell` PTB, simulate it, and sign only in live mode and only if the simulation passed.

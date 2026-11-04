@@ -44,18 +44,18 @@ const sharedInputs = (data: Data) =>
 describe("VaultTransactions.create", () => {
   it("splits the deposit, creates the vault and sends the OwnerCap to the user", () => {
     const tx = new Transaction();
-    vt.create(tx, { limits, fees, depositMist: suiToMist(100), operator: OPERATOR, owner: USER });
+    vt.create(tx, { limits, fees, venuesMask: 3, depositMist: suiToMist(100), operator: OPERATOR, owner: USER });
     const data = tx.getData();
     expect(kinds(data)).toEqual(["SplitCoins", "MoveCall", "MoveCall", "TransferObjects"]);
     expect(calls(data)).toEqual(["vault::new_limits", "vault::create"]);
     for (const c of data.commands) if (c.MoveCall) expect(c.MoveCall.package).toBe(PKG.packageId);
-    // limits, daily_fee_cap, treasury, free_days, coin, operator, clock
-    expect(data.commands[2]?.MoveCall?.arguments).toHaveLength(7);
+    // limits, daily_fee_cap, treasury, free_days, venues, coin, operator, clock
+    expect(data.commands[2]?.MoveCall?.arguments).toHaveLength(8);
   });
 
   it("rejects a zero deposit", () => {
     expect(() =>
-      vt.create(new Transaction(), { limits, fees, depositMist: 0n, operator: OPERATOR, owner: USER }),
+      vt.create(new Transaction(), { limits, fees, venuesMask: 3, depositMist: 0n, operator: OPERATOR, owner: USER }),
     ).toThrow();
   });
 });
@@ -119,6 +119,14 @@ describe("owner calls", () => {
       "vault::withdraw_all_token",
       "vault::withdraw_all_sui",
     ]);
+  });
+
+  it("setVenues is an owner call and refuses an empty or unknown set", () => {
+    const tx = new Transaction();
+    vt.setVenues(tx, { vault: VAULT, ownerCap: OWNER_CAP, venuesMask: 2 });
+    expect(calls(tx.getData())).toEqual(["vault::set_venues"]);
+    expect(() => vt.setVenues(new Transaction(), { vault: VAULT, ownerCap: OWNER_CAP, venuesMask: 0 })).toThrow();
+    expect(() => vt.setVenues(new Transaction(), { vault: VAULT, ownerCap: OWNER_CAP, venuesMask: 4 })).toThrow();
   });
 
   it("setFeeTerms is an owner call", () => {
@@ -190,6 +198,7 @@ describe("BCS layout", () => {
       daily_fee_cap: 200_000_000n,
       treasury: TREASURY,
       last_fee_day: 20_006n,
+      venues: 3,
     };
     const decoded = decodeVault(AgentVaultBcs.serialize(value).toBytes());
     expect(decoded.trade_cap_id).toBe(TRADE_CAP);
@@ -223,6 +232,7 @@ describe("readVaults", () => {
       daily_fee_cap: 5n,
       treasury: TREASURY,
       last_fee_day: 3n,
+      venues: 1,
     }).toBytes();
     const calls: number[] = [];
     const client = {
@@ -298,7 +308,9 @@ describe("helpers", () => {
       depositMist: suiToMist(100),
       operator: OPERATOR,
       priceUsdPerDay: 1.01,
+      venueLabels: ["Blast"],
     }).join("\n");
+    expect(lines).toContain("The agent may buy only on Blast.");
     expect(lines).toContain("You pay your plan's price, $1.01 a day in SUI");
     expect(lines).toContain("never lets us take more than 0.200 SUI in a day");
     expect(lines).toContain("The first 3 days are free.");

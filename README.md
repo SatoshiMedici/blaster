@@ -1,6 +1,6 @@
 # Blast Agents
 
-AI agents trade [Blast](https://blast.fun) launches on Sui **from each user's own on-chain vault**. The user picks a model (a curated set across three price tiers, all through OpenRouter), how active the agent is, and their risk limits. They pay a daily price derived from that plan.
+AI agents trade [Blast](https://blast.fun) launches on Sui **from each user's own on-chain vault**. The user picks a model (a curated set across three price tiers, all through OpenRouter), how active the agent is, which launchpads it may buy on (Blast today; SuiPump once its adapter is verified and audited), and their risk limits. They pay a daily price derived from that plan.
 
 Users keep custody: the agent can trade, but it can never withdraw. The only other outflow is the plan's daily fee, bounded by a spending limit the user signs and paid only to the approved treasury. Limits are enforced on-chain, and the user can pause, revoke or withdraw at any time, even if our backend is down.
 

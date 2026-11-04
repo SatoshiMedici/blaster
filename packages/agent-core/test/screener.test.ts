@@ -6,6 +6,7 @@ import type { LaunchView } from "../src/snapshot.ts";
 
 const launch = (id: string, over: Partial<LaunchView> = {}): LaunchView => ({
   launch_id: id,
+  venue: "blast",
   untrusted_symbol: "X",
   untrusted_name: "X",
   lifecycle: "Live",
@@ -50,6 +51,16 @@ describe("screenLaunches", () => {
     expect(r.kept.some((l) => l.launch_id === "zz")).toBe(true);
     const ids = r.kept.map((l) => l.launch_id);
     expect(ids).toEqual([...ids].sort());
+  });
+});
+
+describe("venues", () => {
+  it("drops launches on venues the owner disabled, but keeps held ones", () => {
+    const pump = launch("p", { venue: "suipump" });
+    const heldPump = launch("q", { venue: "suipump" });
+    const r = screenLaunches([launch("b"), pump, heldPump], new Set(["q"]), DEFAULT_SCREEN, new Set(["blast"]));
+    expect(r.kept.map((l) => l.launch_id)).toEqual(["b", "q"]);
+    expect(r.rejected).toEqual([{ launch_id: "p", why: "venue not allowed by owner" }]);
   });
 });
 

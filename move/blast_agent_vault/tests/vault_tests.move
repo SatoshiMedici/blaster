@@ -22,6 +22,7 @@ const ONE: u64 = 1_000_000_000;
 const DAY_MS: u64 = 86_400_000;
 const FEE_CAP: u64 = 200_000_000; // 0.2 SUI a day
 const FREE_DAYS: u64 = 7;
+const BOTH_VENUES: u8 = 3;
 
 // Limits used by most tests: 5 / 15 / 30 ONE, 2 open positions.
 fun default_limits(): Limits { vault::new_limits(5 * ONE, 15 * ONE, 30 * ONE, 2, true) }
@@ -39,6 +40,7 @@ fun setup_with_free_days(deposit: u64, free_days: u64): (Scenario, Clock) {
         FEE_CAP,
         TREASURY,
         free_days,
+        BOTH_VENUES,
         coin::mint_for_testing<SUI>(deposit, scenario.ctx()),
         OPERATOR,
         &clock,
@@ -60,7 +62,7 @@ fun buy<Meme>(
     refund: u64,
     clock: &Clock,
 ) {
-    let (mut quote_in, ticket) = v.begin_buy<Meme>(cap, amount, min_out, clock);
+    let (mut quote_in, ticket) = v.begin_buy<Meme>(cap, vault::venue_blast(), amount, min_out, clock);
     let refund_balance = quote_in.split(refund);
     balance::destroy_for_testing(quote_in); // "the curve" keeps the spent ONE
     v.finish_buy<Meme>(ticket, balance::create_for_testing<Meme>(meme_out), refund_balance);
@@ -426,6 +428,7 @@ fun trade_cap_of_another_vault_aborts() {
         FEE_CAP,
         TREASURY,
         FREE_DAYS,
+        BOTH_VENUES,
         coin::mint_for_testing<SUI>(100 * ONE, scenario.ctx()),
         STRANGER,
         &clock,
@@ -453,6 +456,7 @@ fun owner_cap_of_another_vault_cannot_withdraw() {
         FEE_CAP,
         TREASURY,
         FREE_DAYS,
+        BOTH_VENUES,
         coin::mint_for_testing<SUI>(ONE, scenario.ctx()),
         STRANGER,
         &clock,
@@ -761,6 +765,7 @@ fun fee_terms_need_the_vaults_own_owner_cap() {
         FEE_CAP,
         STRANGER,
         FREE_DAYS,
+        BOTH_VENUES,
         coin::mint_for_testing<SUI>(ONE, scenario.ctx()),
         STRANGER,
         &clock,
@@ -839,4 +844,58 @@ fun owner_withdraws_after_agent_pause() {
     destroy(all);
     give_back(v, owner_cap, trade_cap);
     finish(scenario, clock);
+}
+
+// === Venues (owner chooses where the agent may buy) ===
+
+#[test]
+fun owner_limits_the_agent_to_one_venue() {
+    let (scenario, clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    assert_eq!(v.venues(), BOTH_VENUES);
+    v.set_venues(&owner_cap, vault::venue_suipump());
+    assert_eq!(v.venues(), 2);
+    // A SuiPump buy is still allowed.
+    let (quote, ticket) = v.begin_buy<MEME_A>(&trade_cap, vault::venue_suipump(), ONE, 1, &clock);
+    balance::destroy_for_testing(quote);
+    v.finish_buy<MEME_A>(ticket, balance::create_for_testing<MEME_A>(10), balance::zero());
+    give_back(v, owner_cap, trade_cap);
+    finish(scenario, clock);
+}
+
+#[test, expected_failure(abort_code = vault::EVenueNotAllowed)]
+fun agent_cannot_buy_on_a_venue_the_owner_disabled() {
+    let (scenario, clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    v.set_venues(&owner_cap, vault::venue_suipump());
+    buy<MEME_A>(&mut v, &trade_cap, ONE, 1, 1, 0, &clock); // Blast
+    abort 99
+}
+
+#[test]
+fun selling_still_works_after_a_venue_is_disabled() {
+    let (scenario, clock) = setup(100 * ONE);
+    let (mut v, owner_cap, trade_cap) = take(&scenario);
+    buy<MEME_A>(&mut v, &trade_cap, ONE, 1, 10, 0, &clock);
+    v.set_venues(&owner_cap, vault::venue_suipump());
+    sell<MEME_A>(&mut v, &trade_cap, 10, 1, ONE);
+    assert_eq!(v.open_positions(), 0);
+    give_back(v, owner_cap, trade_cap);
+    finish(scenario, clock);
+}
+
+#[test, expected_failure(abort_code = vault::EInvalidVenues)]
+fun empty_venue_set_is_rejected() {
+    let (scenario, _clock) = setup(100 * ONE);
+    let (mut v, owner_cap, _trade_cap) = take(&scenario);
+    v.set_venues(&owner_cap, 0);
+    abort 99
+}
+
+#[test, expected_failure(abort_code = vault::EInvalidVenues)]
+fun unknown_venue_bit_is_rejected() {
+    let (scenario, _clock) = setup(100 * ONE);
+    let (mut v, owner_cap, _trade_cap) = take(&scenario);
+    v.set_venues(&owner_cap, 4);
+    abort 99
 }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ActivityChoice } from "./activity.ts";
 import { OnChainLimits, PRESET_IDS, RiskSettings, u64String } from "./limits.ts";
 import { REFERRAL_CODE } from "./referrals.ts";
+import { VenueId } from "./venues.ts";
 
 export const SuiAddress = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "expected a 32-byte 0x address");
 export const ObjectId = SuiAddress;
@@ -24,6 +25,8 @@ export const AuthVerifyBody = z.object({
 export const PrepareVaultBody = z.object({
   model: z.string(),
   activity: ActivityChoice,
+  /** Where the agent may buy (at least one). Stored on-chain as a bitmask. */
+  venues: z.array(VenueId).min(1),
   preset: z.enum(PRESET_IDS),
   settings: RiskSettings,
   depositMist: u64String.refine((s) => BigInt(s) > 0n, "deposit must be positive"),

@@ -29,6 +29,7 @@ const agentVaultFields = {
   daily_fee_cap: bcs.u64(),
   treasury: bcs.Address,
   last_fee_day: bcs.u64(),
+  venues: bcs.u8(),
 };
 export const AgentVaultBcs = bcs.struct("AgentVault", agentVaultFields);
 

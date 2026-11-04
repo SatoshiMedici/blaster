@@ -1,5 +1,6 @@
 "use client";
 
+import { maskToVenues, VENUES } from "@blast-agents/shared";
 import { describeEmptyVault, type VaultState, VaultTransactions } from "@blast-agents/vault-sdk";
 import { useCurrentAccount, useDAppKit } from "@mysten/dapp-kit-react";
 import { Transaction } from "@mysten/sui/transactions";
@@ -215,6 +216,12 @@ function VaultCard({ vault, owner, suiUsd }: { vault: VaultState; owner: string;
           ["Open positions", `${vault.openPositions} of ${vault.limits.maxOpenPositions}`],
           ["Daily spending limit", sui(Number(vault.dailyFeeCapMist) / 1e9, 3)],
           ["Spent today", sui(Number(vault.spentTodayMist) / 1e9)],
+          [
+            "Trades on",
+            maskToVenues(vault.venuesMask)
+              .map((v) => VENUES[v].label)
+              .join(" + ") || "none",
+          ],
         ].map(([k, v]) => (
           <div key={k} className="flex justify-between gap-3 sm:block">
             <dt className="text-xs text-muted">{k}</dt>

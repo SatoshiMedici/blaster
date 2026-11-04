@@ -19,6 +19,7 @@ This document says what `blast_agent_vault` and the operator guarantee, what the
 4. **The agent can stop itself but never restart.** `pause_by_agent` (fee unpaid, drawdown stop) only sets `paused`; `resume` needs the OwnerCap.
 5. **Revoke is instant.** After `revoke_agent` or `authorize_agent`, every call with the old TradeCap aborts.
 6. **Hard caps:** per-trade, per-launch, per-day spend and the number of open positions. Every trade needs a non-zero `min_out`, and the output is checked against it again after the Blast call.
+7. **The owner picks the launchpads.** `vault.venues` (Blast, SuiPump, or both) is set at creation and changed only with the OwnerCap (`set_venues`). Every buy names its venue and aborts if the owner didn't allow it. Sells are never venue-gated, so a position can always be closed.
 
 ## What is _not_ guaranteed on-chain (residual risk)
 
@@ -31,6 +32,7 @@ This document says what `blast_agent_vault` and the operator guarantee, what the
 | Bad model decisions                                                                             | The caps above                                                                                                                                             | Off-chain risk check; hold-on-error; 90 s timeout = hold                                                                                                        |
 | Prompt injection via token names                                                                | The caps above                                                                                                                                             | `untrusted_*` fields, length caps; limits never come from model output                                                                                          |
 | Malicious vault upgrade                                                                         | Depends on who holds the UpgradeCap                                                                                                                        | Multisig + timelock, published policy, audit before real users                                                                                                  |
+| SuiPump adapter (not built yet)                                                                 | No code calls SuiPump today; the SuiPump bit only records the owner's choice                                                                               | SuiPump publishes no source or audit. Before an adapter ships: verify its mainnet ABI on-chain, pin one package lineage, audit the adapter with the vault       |
 | Blast upgrade breaks trading                                                                    | Trading aborts; withdrawals keep working                                                                                                                   | Compatible upgrade of the vault package, relinked to the new Blast version                                                                                      |
 
 ## Operating-cost guards (SPEC 1b, docs/ECONOMICS.md)

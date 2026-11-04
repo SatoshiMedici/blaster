@@ -1,3 +1,4 @@
+import type { VenueId } from "@blast-agents/shared";
 import { launchProgressBps } from "@interest-protocol/blast-launchpad-sdk/market-data";
 import type { LaunchState } from "@interest-protocol/blast-launchpad-sdk/state";
 import { normalizeStructTag } from "@mysten/sui/utils";
@@ -10,6 +11,8 @@ const pct = (bps: bigint): number => Number(bps) / 100;
 /** What both models see about one launch. Name and symbol are written by creators: untrusted. */
 export type LaunchView = {
   launch_id: string;
+  /** Which launchpad this launch trades on. */
+  venue: VenueId;
   untrusted_symbol: string;
   untrusted_name: string;
   lifecycle: LaunchState["lifecycle"];
@@ -67,6 +70,7 @@ export async function readMarket(now = Date.now()): Promise<Market> {
       const roundEnd = l.publicStartMs === null ? null : l.publicStartMs + l.openingRoundMs;
       return {
         launch_id: l.objectId,
+        venue: "blast",
         untrusted_symbol: meta.symbol,
         untrusted_name: meta.name,
         lifecycle: l.lifecycle,

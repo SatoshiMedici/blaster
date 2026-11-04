@@ -1,10 +1,12 @@
 "use client";
 
+import type { VenueId } from "@blast-agents/shared";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, RefreshCw } from "lucide-react";
-import { type LaunchRow, recentLaunches } from "@/lib/chain";
+import { useState } from "react";
+import { type LaunchRow, recentLaunches, suipumpLaunches } from "@/lib/chain";
 import { cx } from "@/lib/format";
-import { Badge, LiveDot } from "./ui";
+import { Badge, LiveDot, Segmented } from "./ui";
 
 const ago = (ms: number) => {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60_000));
@@ -23,14 +25,36 @@ const lifecycleTone: Record<LaunchRow["lifecycle"], "gain" | "info" | "punch" | 
  * screens every minute. Nothing here is simulated.
  */
 export function LiveLaunches() {
-  const q = useQuery({ queryKey: ["launches"], queryFn: () => recentLaunches(7), refetchInterval: 30_000, retry: 1 });
+  const [venue, setVenue] = useState<VenueId>("blast");
+  const q = useQuery({
+    queryKey: ["launches", venue],
+    queryFn: () => (venue === "blast" ? recentLaunches(7) : suipumpLaunches(7)),
+    refetchInterval: 30_000,
+    retry: 1,
+  });
+  const linkFor = (l: LaunchRow) =>
+    venue === "blast" ? `https://suiscan.xyz/mainnet/object/${l.id}` : `https://suipump.org/token/${l.id}`;
 
   return (
     <div className="card overflow-hidden">
       <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3.5">
         <div>
-          <p className="text-sm font-semibold">Live on Blast</p>
-          <p className="font-mono text-[11px] text-faint">newest launches · Sui mainnet</p>
+          <p className="text-sm font-semibold">Live launches</p>
+          <p className="font-mono text-[11px] text-faint">
+            {venue === "blast" ? "Blast · read from Sui mainnet" : "SuiPump · from SuiPump's index"}
+          </p>
+        </div>
+        <div className="w-44">
+          <Segmented
+            label="Launchpad"
+            size="sm"
+            value={venue}
+            onChange={setVenue}
+            options={[
+              { value: "blast", label: "Blast" },
+              { value: "suipump", label: "SuiPump" },
+            ]}
+          />
         </div>
         <span className="flex items-center gap-2 font-mono text-[11px] text-gain">
           {q.isError ? null : <LiveDot />} {q.isFetching ? "updating" : q.isError ? "" : "live"}
@@ -51,7 +75,7 @@ export function LiveLaunches() {
           </ul>
         ) : q.isError ? (
           <div className="flex h-[320px] flex-col items-center justify-center gap-3 px-6 text-center">
-            <p className="text-sm text-muted">Couldn't reach Sui right now.</p>
+            <p className="text-sm text-muted">Couldn't load {venue === "blast" ? "Sui" : "SuiPump"} data right now.</p>
             <button
               type="button"
               onClick={() => q.refetch()}
@@ -67,7 +91,7 @@ export function LiveLaunches() {
             {q.data.map((l) => (
               <li key={l.id}>
                 <a
-                  href={`https://suiscan.xyz/mainnet/object/${l.id}`}
+                  href={linkFor(l)}
                   target="_blank"
                   rel="noreferrer"
                   className="group flex items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.02]"

@@ -4,6 +4,7 @@
  * `progress_cross` triggers and appear in the model's market snapshot. This keeps LLM spend
  * proportional to *interesting* launches instead of launches × vaults, and shrinks the prompt.
  */
+import type { VenueId } from "@blast-agents/shared";
 import type { LaunchView } from "./snapshot.ts";
 
 export type ScreenConfig = {
@@ -30,11 +31,15 @@ export const DEFAULT_SCREEN: ScreenConfig = {
 
 export type ScreenResult = { kept: LaunchView[]; rejected: Array<{ launch_id: string; why: string }> };
 
-/** Held launches are always kept, so the agent can always see and sell what it owns. */
+/**
+ * Held launches are always kept, so the agent can always see and sell what it owns. Launches on
+ * venues the owner hasn't allowed are dropped (the vault would refuse those buys anyway).
+ */
 export function screenLaunches(
   launches: LaunchView[],
   heldLaunchIds: ReadonlySet<string>,
   cfg = DEFAULT_SCREEN,
+  allowedVenues?: ReadonlySet<VenueId>,
 ): ScreenResult {
   const rejected: ScreenResult["rejected"] = [];
   const pass: LaunchView[] = [];
@@ -44,19 +49,21 @@ export function screenLaunches(
       continue;
     }
     const why =
-      l.lifecycle !== "Live"
-        ? `lifecycle ${l.lifecycle}`
-        : l.creator_sell_burn_pct > cfg.maxSellBurnPct
-          ? "sell burn too high"
-          : l.trade_fee_pct > cfg.maxTradeFeePct
-            ? "trade fee too high"
-            : l.progress_to_graduation_pct < cfg.minProgressPct
-              ? "too early"
-              : l.progress_to_graduation_pct > cfg.maxProgressPct
-                ? "too close to graduation"
-                : l.real_reserve_sui < cfg.minRealReserveSui
-                  ? "reserve too small"
-                  : null;
+      allowedVenues && !allowedVenues.has(l.venue)
+        ? "venue not allowed by owner"
+        : l.lifecycle !== "Live"
+          ? `lifecycle ${l.lifecycle}`
+          : l.creator_sell_burn_pct > cfg.maxSellBurnPct
+            ? "sell burn too high"
+            : l.trade_fee_pct > cfg.maxTradeFeePct
+              ? "trade fee too high"
+              : l.progress_to_graduation_pct < cfg.minProgressPct
+                ? "too early"
+                : l.progress_to_graduation_pct > cfg.maxProgressPct
+                  ? "too close to graduation"
+                  : l.real_reserve_sui < cfg.minRealReserveSui
+                    ? "reserve too small"
+                    : null;
     if (why) rejected.push({ launch_id: l.launch_id, why });
     else pass.push(l);
   }

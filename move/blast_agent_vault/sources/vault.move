@@ -62,6 +62,10 @@ const EFeeNotDue: u64 = 14;
 const EExceedsDailyFeeCap: u64 = 15;
 /// Unknown pause reason.
 const EInvalidPauseReason: u64 = 16;
+/// Venue set is empty or names an unknown venue.
+const EInvalidVenues: u64 = 17;
+/// The owner hasn't allowed the agent to buy on this venue.
+const EVenueNotAllowed: u64 = 18;
 
 // === Constants ===
 
@@ -71,6 +75,12 @@ const SIDE_SELL: u8 = 1;
 const PAUSE_BY_OWNER: u8 = 0;
 /// Highest `reason` the agent may give when it pauses itself.
 const MAX_AGENT_PAUSE_REASON: u8 = 3;
+
+/// Trading venues, as bits of `AgentVault.venues`. The owner picks them; the agent may only buy on
+/// venues the owner allowed. Sells are always allowed so positions can be exited after a change.
+const VENUE_BLAST: u8 = 1;
+const VENUE_SUIPUMP: u8 = 2;
+const ALL_VENUES: u8 = 3;
 
 // === Objects ===
 
@@ -98,6 +108,8 @@ public struct AgentVault has key {
     treasury: address,
     /// Last day already paid for, or covered by the free period. A fee is due when today is later.
     last_fee_day: u64,
+    /// Venues the agent may buy on (bitmask of `VENUE_*`). Chosen and changed only by the owner.
+    venues: u8,
 }
 
 public struct Limits has copy, drop, store {
@@ -158,6 +170,8 @@ public struct AgentRevoked has copy, drop { vault_id: ID, trade_cap_id: Option<I
 
 public struct FeeTermsChanged has copy, drop { vault_id: ID, daily_fee_cap: u64, treasury: address }
 
+public struct VenuesChanged has copy, drop { vault_id: ID, venues: u8 }
+
 public struct FeeCharged has copy, drop { vault_id: ID, amount: u64, day: u64, treasury: address }
 
 /// `side`: 0 = buy, 1 = sell. `sui_amount` is net SUI spent (buy, after refund) or received (sell).
@@ -198,12 +212,14 @@ public fun create(
     daily_fee_cap: u64,
     treasury: address,
     free_days: u64,
+    venues: u8,
     coin: Coin<SUI>,
     operator: address,
     clock: &Clock,
     ctx: &mut TxContext,
 ): OwnerCap {
     assert_valid_limits(&limits);
+    assert_valid_venues(venues);
     let today = clock.timestamp_ms() / MS_PER_DAY;
     // Fees are due from day `today + free_days`. Sui's clock is far past day 0, so this never
     // underflows on a real network.
@@ -223,6 +239,7 @@ public fun create(
         daily_fee_cap,
         treasury,
         last_fee_day,
+        venues,
     };
     let vault_id = object::id(&vault);
     event::emit(VaultCreated {
@@ -310,6 +327,14 @@ public fun resume(vault: &mut AgentVault, cap: &OwnerCap) {
 }
 
 /// Changes the fee terms. Owner only: a fee change applies only once the owner re-approves it.
+/// Chooses where the agent may buy: Blast, SuiPump or both. Owner only.
+public fun set_venues(vault: &mut AgentVault, cap: &OwnerCap, venues: u8) {
+    vault.assert_owner(cap);
+    assert_valid_venues(venues);
+    vault.venues = venues;
+    event::emit(VenuesChanged { vault_id: object::id(vault), venues });
+}
+
 public fun set_fee_terms(vault: &mut AgentVault, cap: &OwnerCap, daily_fee_cap: u64, treasury: address) {
     vault.assert_owner(cap);
     vault.daily_fee_cap = daily_fee_cap;
@@ -356,7 +381,7 @@ public fun buy<Meme>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let (quote_in, ticket) = vault.begin_buy<Meme>(cap, amount, min_meme_out, clock);
+    let (quote_in, ticket) = vault.begin_buy<Meme>(cap, VENUE_BLAST, amount, min_meme_out, clock);
     let (meme_out, refund) = launch::buy(
         launch,
         package_version,
@@ -425,11 +450,13 @@ public fun charge_fee(vault: &mut AgentVault, cap: &TradeCap, amount: u64, clock
 public(package) fun begin_buy<Meme>(
     vault: &mut AgentVault,
     cap: &TradeCap,
+    venue: u8,
     amount: u64,
     min_out: u64,
     clock: &Clock,
 ): (Balance<SUI>, BuyTicket) {
     vault.assert_agent(cap);
+    assert!(vault.venues & venue != 0, EVenueNotAllowed);
     assert!(amount > 0, EZeroAmount);
     assert!(!vault.limits.min_out_required || min_out > 0, EZeroMinOut);
     assert!(amount <= vault.limits.max_trade, EExceedsMaxTrade);
@@ -501,6 +528,10 @@ public(package) fun finish_sell(vault: &mut AgentVault, ticket: SellTicket, quot
 }
 
 // === Private helpers ===
+
+fun assert_valid_venues(venues: u8) {
+    assert!(venues != 0 && venues & ALL_VENUES == venues, EInvalidVenues);
+}
 
 fun assert_owner(vault: &AgentVault, cap: &OwnerCap) {
     assert!(cap.vault_id == object::id(vault), EWrongVault);
@@ -596,6 +627,13 @@ public fun treasury(vault: &AgentVault): address { vault.treasury }
 
 /// A fee can be charged on any day after this one.
 public fun last_fee_day(vault: &AgentVault): u64 { vault.last_fee_day }
+
+/// Venues the agent may buy on (bitmask: 1 = Blast, 2 = SuiPump).
+public fun venues(vault: &AgentVault): u8 { vault.venues }
+
+public fun venue_blast(): u8 { VENUE_BLAST }
+
+public fun venue_suipump(): u8 { VENUE_SUIPUMP }
 
 public fun owner_cap_vault_id(cap: &OwnerCap): ID { cap.vault_id }
 

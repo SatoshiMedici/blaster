@@ -24,6 +24,8 @@ export type VaultState = {
   treasury: string;
   /** Last day paid for or covered by the free period; a fee is due on any later day. */
   lastFeeDay: bigint;
+  /** Venues the agent may buy on (bitmask: 1 = Blast, 2 = SuiPump). */
+  venuesMask: number;
 };
 
 /** TypeName strings have no `0x` prefix; normalize to the usual `0x…::m::T` form. */
@@ -100,6 +102,7 @@ async function toVaultState(client: ClientWithCoreApi, object: VaultObject, pkg?
     dailyFeeCapMist: BigInt(v.daily_fee_cap),
     treasury: v.treasury,
     lastFeeDay: BigInt(v.last_fee_day),
+    venuesMask: v.venues,
   };
 }
 

@@ -6,6 +6,7 @@ import {
   CUSTOM_DECISIONS_RANGE,
   DEFAULT_FREE_DAYS,
   feeDrag,
+  liveVenues,
   MODEL_CATALOG,
   type PresetId,
   quoteFeeTerms,
@@ -14,6 +15,10 @@ import {
   recommendPlan,
   settingsToLimits,
   suiToMist,
+  VENUE_IDS,
+  VENUES,
+  type VenueId,
+  venuesToMask,
 } from "@blast-agents/shared";
 import { describeCreate, VaultTransactions } from "@blast-agents/vault-sdk";
 import { useCurrentAccount, useDAppKit } from "@mysten/dapp-kit-react";
@@ -51,6 +56,7 @@ export function StartFlow() {
   });
   const [custom, setCustom] = useState(12);
   const [preset, setPreset] = useState<PresetId>("balanced");
+  const [venues, setVenues] = useState<VenueId[]>(() => liveVenues());
   const [depositSui, setDepositSui] = useState("1000");
   const [accepted, setAccepted] = useState(false);
   const [digest, setDigest] = useState<string | null>(null);
@@ -95,6 +101,7 @@ export function StartFlow() {
       const tx = new Transaction();
       new VaultTransactions(VAULT_PACKAGE).create(tx, {
         limits,
+        venuesMask: venuesToMask(venues),
         fees: { dailyFeeCapMist: terms.dailyFeeCapMist.toString(), treasury: TREASURY_ADDRESS, freeDays },
         depositMist,
         operator: OPERATOR_ADDRESS,
@@ -237,6 +244,48 @@ export function StartFlow() {
 
             <Block
               n={3}
+              title="Where to trade"
+              hint="The agent may only buy on the launchpads you pick. Enforced on-chain."
+            >
+              <div className="grid gap-2 sm:grid-cols-2">
+                {VENUE_IDS.map((id) => {
+                  const v = VENUES[id];
+                  const live = v.status === "live";
+                  const on = venues.includes(id);
+                  return (
+                    <label
+                      key={id}
+                      className={cx(
+                        "flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition",
+                        !live && "cursor-not-allowed opacity-60",
+                        on ? "border-punch/60 bg-punch/[0.07]" : "border-line-soft bg-white/[0.02] hover:border-line",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-4 accent-punch"
+                        checked={on}
+                        disabled={!live || (on && venues.length === 1)}
+                        onChange={(e) =>
+                          setVenues((cur) => (e.target.checked ? [...cur, id] : cur.filter((x) => x !== id)))
+                        }
+                      />
+                      <span>
+                        <span className="block text-sm font-medium">{v.label}</span>
+                        <span className="mt-0.5 block text-xs text-muted">
+                          {live
+                            ? `${(v.tradeFee * 100).toFixed(1)}% trade fee`
+                            : "Coming soon: vault adapter in review"}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </Block>
+
+            <Block
+              n={4}
               title="Risk limits"
               hint="Written on-chain. The agent can't exceed them, whatever the model says."
             >
@@ -271,7 +320,7 @@ export function StartFlow() {
               </div>
             </Block>
 
-            <Block n={4} title="Deposit" hint="No minimum. You can add or withdraw any time.">
+            <Block n={5} title="Deposit" hint="No minimum. You can add or withdraw any time.">
               <div className="flex items-center gap-2 rounded-2xl border border-line-soft bg-black/20 p-2 focus-within:border-punch/50">
                 <input
                   inputMode="decimal"
@@ -389,10 +438,11 @@ export function StartFlow() {
               depositMist,
               operator: OPERATOR_ADDRESS ?? UNASSIGNED,
               priceUsdPerDay: quote.priceUsdPerDay,
+              venueLabels: venues.map((v) => VENUES[v].label),
             }).map((line, i) => (
               <li key={line} className="flex gap-4 px-6 py-4 text-sm leading-relaxed text-ink-2">
                 <span className="num mt-0.5 text-faint">{String(i + 1).padStart(2, "0")}</span>
-                <span className={i === 6 ? "text-ink" : undefined}>{line}</span>
+                <span className={line.startsWith("You can lose") ? "text-ink" : undefined}>{line}</span>
               </li>
             ))}
           </ol>

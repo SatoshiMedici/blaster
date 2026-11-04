@@ -60,7 +60,15 @@ export class VaultTransactions {
    */
   create(
     tx: Transaction,
-    args: { limits: OnChainLimits; fees: FeeTerms; depositMist: bigint; operator: string; owner: string },
+    args: {
+      limits: OnChainLimits;
+      fees: FeeTerms;
+      /** Where the agent may buy: bitmask from `venuesToMask` (1 = Blast, 2 = SuiPump). */
+      venuesMask: number;
+      depositMist: bigint;
+      operator: string;
+      owner: string;
+    },
   ) {
     if (args.depositMist <= 0n) throw new Error("deposit must be positive");
     const [deposit] = tx.splitCoins(tx.gas, [tx.pure.u64(args.depositMist)]);
@@ -71,6 +79,7 @@ export class VaultTransactions {
         tx.pure.u64(args.fees.dailyFeeCapMist),
         tx.pure.address(args.fees.treasury),
         tx.pure.u64(args.fees.freeDays),
+        tx.pure.u8(args.venuesMask),
         deposit as TransactionObjectArgument,
         tx.pure.address(args.operator),
         tx.object.clock(),
@@ -145,6 +154,15 @@ export class VaultTransactions {
     return tx.moveCall({
       target: this.#target("set_limits"),
       arguments: [this.#shared(tx, args.vault, true), this.#obj(tx, args.ownerCap), this.limits(tx, args.limits)],
+    });
+  }
+
+  /** Chooses where the agent may buy (bitmask from `venuesToMask`). Owner only. */
+  setVenues(tx: Transaction, args: { vault: SharedObject; ownerCap: ObjectInput; venuesMask: number }) {
+    if (args.venuesMask <= 0 || args.venuesMask > 3) throw new Error("invalid venue set");
+    return tx.moveCall({
+      target: this.#target("set_venues"),
+      arguments: [this.#shared(tx, args.vault, true), this.#obj(tx, args.ownerCap), tx.pure.u8(args.venuesMask)],
     });
   }
 

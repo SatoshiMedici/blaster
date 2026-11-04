@@ -134,3 +134,46 @@ export function executedDigest(result: ExecResult): string {
   if (!tx.status.success) throw new Error(tx.status.error?.message ?? `Transaction ${tx.digest} failed on-chain.`);
   return tx.digest;
 }
+
+/** SuiPump's public token index, the same feed suipump.org's own app reads. */
+const SUIPUMP_INDEX = process.env.NEXT_PUBLIC_SUIPUMP_INDEX_URL ?? "https://suipump-main-web.onrender.com/tokens";
+
+type SuiPumpIndexRow = {
+  curveId?: string;
+  tokenType?: string;
+  token_type?: string;
+  name?: string;
+  symbol?: string;
+  createdAt?: number | string;
+  graduated?: boolean;
+  grad_threshold_sui?: number | string;
+  stats?: { reserve_sui?: number | string; grad_threshold_sui?: number | string };
+};
+
+/** The newest SuiPump launches, newest first, from SuiPump's index (not from our servers). */
+export async function suipumpLaunches(limit = 8): Promise<LaunchRow[]> {
+  const res = await fetch(SUIPUMP_INDEX, { cache: "no-store" });
+  if (!res.ok) throw new Error(`SuiPump index returned ${res.status}`);
+  const rows = (await res.json()) as unknown;
+  if (!Array.isArray(rows)) throw new Error("Unexpected SuiPump index response");
+  return (rows as SuiPumpIndexRow[])
+    .filter((r) => typeof r.curveId === "string" && /^0x[0-9a-f]{64}$/.test(r.curveId))
+    .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0))
+    .slice(0, limit)
+    .map((r) => {
+      const reserve = Number(r.stats?.reserve_sui ?? 0);
+      const threshold = Number(r.stats?.grad_threshold_sui ?? r.grad_threshold_sui ?? 0);
+      const progressPct = r.graduated ? 100 : threshold > 0 ? Math.min(100, (reserve / threshold) * 100) : 0;
+      return {
+        id: r.curveId as string,
+        symbol: String(r.symbol ?? "?").slice(0, 16),
+        name: String(r.name ?? "").slice(0, 40),
+        lifecycle: r.graduated ? ("Migrated" as const) : ("Live" as const),
+        progressPct,
+        realReserveSui: reserve,
+        graduationSui: threshold,
+        sellBurnPct: 0,
+        publicSinceMs: Number(r.createdAt) > 0 ? Number(r.createdAt) : null,
+      };
+    });
+}

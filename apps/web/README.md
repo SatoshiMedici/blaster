@@ -31,16 +31,17 @@ Every number on the site is real or computed by the same code that bills users. 
 
 ## Configuration
 
-| Variable                                                         | Purpose                                                                                     |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_SUI_GRPC_URL`                                       | Sui gRPC endpoint (default: Mysten mainnet full node)                                       |
-| `NEXT_PUBLIC_VAULT_PACKAGE_ID`                                   | Published `blast_agent_vault`; enables real signing                                         |
-| `NEXT_PUBLIC_OPERATOR_ADDRESS`, `NEXT_PUBLIC_TREASURY_ADDRESS`   | Shown in the signing summary; the API will supply them                                      |
-| `NEXT_PUBLIC_SITE_URL`                                           | Canonical URL (metadata, OpenGraph); defaults to the Vercel production URL                  |
-| `NEXT_PUBLIC_ENOKI_API_KEY`                                      | Enoki **public** API key. Enables social sign-in together with at least one client ID below |
-| `NEXT_PUBLIC_GOOGLE_CLIENT_ID`                                   | Google OAuth client ID ("Sign in with Google")                                              |
-| `NEXT_PUBLIC_FACEBOOK_CLIENT_ID`, `NEXT_PUBLIC_TWITCH_CLIENT_ID` | Optional extra providers Enoki supports                                                     |
-| `NEXT_PUBLIC_ENABLE_BURNER_WALLET`                               | `1` adds a throwaway test wallet. Local testing only; never in production                   |
+| Variable                                                         | Purpose                                                                                              |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SUI_GRPC_URL`                                       | Sui gRPC endpoint (default: Mysten mainnet full node)                                                |
+| `NEXT_PUBLIC_VAULT_PACKAGE_ID`                                   | Published `blast_agent_vault`; enables real signing                                                  |
+| `NEXT_PUBLIC_OPERATOR_ADDRESS`, `NEXT_PUBLIC_TREASURY_ADDRESS`   | Shown in the signing summary; the API will supply them                                               |
+| `NEXT_PUBLIC_SUIPUMP_INDEX_URL`                                  | SuiPump's public token index for the landing page's SuiPump tab (default: the one suipump.org reads) |
+| `NEXT_PUBLIC_SITE_URL`                                           | Canonical URL (metadata, OpenGraph); defaults to the Vercel production URL                           |
+| `NEXT_PUBLIC_ENOKI_API_KEY`                                      | Enoki **public** API key. Enables social sign-in together with at least one client ID below          |
+| `NEXT_PUBLIC_GOOGLE_CLIENT_ID`                                   | Google OAuth client ID ("Sign in with Google")                                                       |
+| `NEXT_PUBLIC_FACEBOOK_CLIENT_ID`, `NEXT_PUBLIC_TWITCH_CLIENT_ID` | Optional extra providers Enoki supports                                                              |
+| `NEXT_PUBLIC_ENABLE_BURNER_WALLET`                               | `1` adds a throwaway test wallet. Local testing only; never in production                            |
 
 ## Design system
 
