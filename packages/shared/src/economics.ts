@@ -1,38 +1,18 @@
 /**
- * Unit-economics model (SPEC 1b "Pricing and unit economics", docs/ECONOMICS.md).
+ * Unit-economics model (docs/ECONOMICS.md).
  *
- * Pure functions over plain numbers (USD). The worker uses these to enforce the pricing rule
- * ("the worst-case day keeps at least a 30% margin") against *measured* costs, and the docs and
- * tests use them to keep the plan's tables honest. Defaults are research-backed estimates as of
- * Nov 2026; replace them with arena measurements.
+ * Pure functions over plain numbers (USD): cost per decision, caching, daily margin, break-even,
+ * lifetime value and fee drag. `pricing.ts` builds plan prices on top of these; the docs and tests
+ * use them to keep the numbers honest. Defaults are research-backed estimates as of Nov 2026;
+ * replace them with arena measurements.
  */
 
-/** Price of one model on OpenRouter, USD per 1M tokens. */
-export type ModelPrice = {
-  inputPerM: number;
-  outputPerM: number;
-  /** Cached prefix read. */
-  cacheReadPerM: number;
-  /** Cached prefix write (Anthropic 5-minute TTL = 1.25× input). */
-  cacheWritePerM: number;
-};
-
-/**
- * OpenRouter list prices, Nov 2026. Sonnet 5.5 cache read reflects the Oct 2026 cut ($0.10).
- * GPT-6.1 Sol's $2.50 cache write is listed by third parties only: treat as conservative.
- */
-export const MODEL_PRICES: Record<string, ModelPrice> = {
-  "anthropic/claude-sonnet-5.5": { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1, cacheWritePerM: 2.5 },
-  "openai/gpt-6.1-sol": { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1, cacheWritePerM: 2.5 },
-  // Cheap tier candidates (~20× cheaper); not enabled in the UI.
-  "anthropic/claude-haiku-5.5": { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 },
-  "openai/gpt-6-luna": { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.125 },
-};
+import type { ModelPrice } from "./models.ts";
 
 /** Token shape of one decision. The shared prefix (system prompt + market snapshot) is cacheable. */
 export type DecisionShape = { sharedPrefixTokens: number; vaultTokens: number; outputTokens: number };
 
-/** ~6k input (5k shared market prefix + 1k vault-specific) and 500 output, per SPEC 1b. */
+/** ~6k input (5k shared market prefix + 1k vault-specific) and 500 output per decision. */
 export const DEFAULT_DECISION_SHAPE: DecisionShape = {
   sharedPrefixTokens: 5_000,
   vaultTokens: 1_000,
@@ -41,7 +21,7 @@ export const DEFAULT_DECISION_SHAPE: DecisionShape = {
 
 /**
  * OpenRouter takes no inference markup; its fee is on credit purchases: 5% for crypto/USDC
- * (our top-up path, SPEC 6.1), 5.5% for card. SPEC 1b's "about 6%" is a conservative round-up.
+ * (our top-up path, SPEC 6.1), 5.5% for card.
  */
 export const OPENROUTER_FEE = { crypto: 0.05, card: 0.055 } as const;
 
@@ -70,8 +50,8 @@ export function costPerDecisionUsd(args: {
 
 /**
  * Best possible hit rate when `k` decisions share one tick's snapshot and one warm-up request
- * writes the cache first: (k-1)/k. At 30 decisions/vault/day and 1,440 ticks/day,
- * k ≈ vaults × 30 / 1440.
+ * writes the cache first: (k-1)/k. With D decisions per vault per day and 1,440 ticks/day,
+ * k ≈ vaults × D / 1440 (higher when triggers fire for many vaults on the same tick).
  */
 export function cacheHitCeiling(decisionsSharingSnapshot: number): number {
   return decisionsSharingSnapshot <= 1 ? 0 : (decisionsSharingSnapshot - 1) / decisionsSharingSnapshot;
@@ -97,12 +77,12 @@ export function dayEconomics(d: DayInputs) {
   return { aiUsd, costUsd, marginUsd, marginPct: d.feeUsd > 0 ? marginUsd / d.feeUsd : 0 };
 }
 
-/** SPEC 1b rule: the worst-case (capped) day must keep at least this margin. */
+/** Default minimum margin for `maxDecisionsForMargin` / `costAlarmThresholdUsd` (a cost-share rule: cost ≤ 70% of revenue). */
 export const MIN_WORST_CASE_MARGIN = 0.3;
 
 /**
  * Largest per-vault daily decision cap that keeps the worst-case day at `minMargin`, given a
- * measured cost per decision. The worker lowers its cap to this when costs rise (SPEC 1b:
+ * measured cost per decision. Useful for fixed-fee analysis (SPEC 1b's original flat fee:
  * "lower the decision cap or raise the fee").
  */
 export function maxDecisionsForMargin(args: {
@@ -170,7 +150,7 @@ export function maxChurnForCac(args: {
   return need <= 0 ? 1 : Math.min(1, args.monthlyContributionUsd / need);
 }
 
-/** The fee as a share of the deposit per year (365-day convention). $0.99 on $250 ≈ 144.5%. */
+/** A daily fee as a share of the deposit per year (365-day convention). $0.99/day on $250 ≈ 144.5%. */
 export function annualFeeDrag(depositUsd: number, feeUsdPerDay: number): number {
   return depositUsd > 0 ? (feeUsdPerDay * 365) / depositUsd : Number.POSITIVE_INFINITY;
 }

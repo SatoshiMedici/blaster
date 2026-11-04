@@ -5,7 +5,7 @@ The full picture is in [SPEC §4](../SPEC.md#4-architecture). This page covers h
 ```text
 Web app (apps/web) ──wallet signs──► Sui mainnet ─┬─ blast_fun (Blast launchpad)
      │ REST/WS                                     └─ blast_agent_vault (move/blast_agent_vault)
-API (apps/api) ──tick jobs──► agent workers (packages/agent-core) ──► Anthropic / OpenAI
+API (apps/api) ──tick jobs──► agent workers (packages/agent-core) ──► OpenRouter (model catalog)
      │                               │ PTBs from packages/vault-sdk, simulated, then KMS-signed
 Postgres ◄──────── indexer ◄──────── Sui events
 ```

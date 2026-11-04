@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cacheHitAlarmFloor, onModelFailure, PlatformSpendGuard, VaultSpendLedger } from "../src/budget.ts";
+import { cacheHitAlarmFloor, onModelFailure, PlatformSpendGuard } from "../src/budget.ts";
 import { warmUpThenFanOut } from "../src/openrouter.ts";
 import { DEFAULT_SCREEN, screenLaunches } from "../src/screener.ts";
 import type { LaunchView } from "../src/snapshot.ts";
@@ -67,15 +67,6 @@ describe("warmUpThenFanOut", () => {
 });
 
 describe("spend backstops", () => {
-  it("stops a vault at its daily AI dollar ceiling", () => {
-    const l = new VaultSpendLedger(0.45);
-    l.record("v", 0.44, 0);
-    expect(l.allow("v", 0)).toBe(true);
-    l.record("v", 0.02, 0);
-    expect(l.allow("v", 0)).toBe(false);
-    expect(l.allow("v", 86_400_000)).toBe(true);
-  });
-
   it("an empty OpenRouter balance stops every call", () => {
     const g = new PlatformSpendGuard(100);
     expect(onModelFailure(g, "out_of_credits")).toBe("hold_and_stop_all");

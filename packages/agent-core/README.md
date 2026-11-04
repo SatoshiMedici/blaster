@@ -6,14 +6,16 @@ The trading brain: market snapshot, the OpenRouter model adapter, rule-based tri
 
 ## Cost controls (SPEC §1b, [docs/ECONOMICS.md](../../docs/ECONOMICS.md))
 
+How active the agent is comes from the owner's plan. The platform adds no cap of its own beyond an incident kill switch.
+
 These modules are side-effect free and exported from `@blast-agents/agent-core`:
 
 | Module          | What it does                                                                                                                                                                                                                                                                                                                                                            |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `openrouter.ts` | Cache-first prompt layout (`buildCachedMessages`: system → tick snapshot with a `cache_control` breakpoint → vault data), OpenRouter routing settings (`require_parameters`, `zdr`, `data_collection: "deny"`, no `provider.order`), the 600-token output cap, `warmUpThenFanOut`, usage-to-cost (`toDecisionUsage`), and failure classification (402 = out of credits) |
-| `triggers.ts`   | `evaluateTriggers`: the model is called only on vault creation, a new launch, a 50%/80% curve crossing, a held position moving >10%, or a 4-hour check. Non-urgent triggers coalesce for 30 minutes.                                                                                                                                                                    |
+| `triggers.ts`   | `evaluateTriggers` and `triggerConfigFor(activity)`: the model is called only on vault creation, a new launch, a 50%/80% curve crossing, a held position moving >10%, or the plan's scheduled check. Non-urgent triggers coalesce within the plan's reaction window.                                                                                                    |
 | `screener.ts`   | `screenLaunches`: global plain-code filter (sell burn, fees, progress, reserve). The snapshot is bounded and stably ordered, so the cached prefix is identical for every vault. Held launches are always kept.                                                                                                                                                          |
-| `budget.ts`     | `DecisionCap` (30/vault/day), `VaultSpendLedger` ($0.45/vault/day AI ceiling), `PlatformSpendGuard` (daily budget + kill switch), `onModelFailure`, `creditRunway` (7-day alert), `CostMonitor` (alarms derived from the 30% margin rule, cache-hit alarm, recommended cap)                                                                                             |
+| `budget.ts`     | `DecisionBudget` (each vault's own plan budget), `VaultSpendLedger` (125% of the plan's expected AI cost per day), `PlatformSpendGuard` (incident budget + kill switch), `onModelFailure`, `creditRunway` (7-day alert), `CostMonitor` (re-pricing alarms: cost above pricing, referred margin under 20%, cache failure)                                                |
 
 ## Trading loop (starter)
 
@@ -38,7 +40,7 @@ Set `OPENROUTER_API_KEY`, `CLAUDE_ADDRESS` and `CHATGPT_ADDRESS`, then:
 pnpm --filter @blast-agents/agent-core arena:once
 ```
 
-`MODE=dry` (the default) simulates every trade and signs nothing. Model slugs (`CLAUDE_MODEL`, `OPENAI_MODEL`) are any OpenRouter slug, so adding a model needs no code change.
+`MODE=dry` (the default) simulates every trade and signs nothing. Model slugs (`CLAUDE_MODEL`, `OPENAI_MODEL`) are any OpenRouter slug. The product's model list and prices live in `@blast-agents/shared` (`MODEL_CATALOG`).
 
 ## Tests
 

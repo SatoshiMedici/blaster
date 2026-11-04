@@ -4,10 +4,35 @@ const sui = (mist: string | bigint) => `${formatSui(BigInt(mist))} SUI`;
 
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
-/** The fee line for the Start screen: "up to X SUI per day while running", plus the free period. */
-export function describeFee(fees: FeeTerms): string {
-  const free = fees.freeDays > 0 ? `, free for the first ${fees.freeDays} day${fees.freeDays === 1 ? "" : "s"}` : "";
-  return `Daily fee: up to ${sui(fees.dailyFeeCapMist)} per day while the agent is running${free}. It is paid only to ${short(fees.treasury)}. A paused or closed vault pays nothing.`;
+/**
+ * The plan line for the Choose and Start screens: model, activity, daily price, and the fee as a
+ * yearly share of the vault, so small depositors see what it means for them.
+ */
+export function describePlan(args: {
+  modelLabel: string;
+  activityLabel: string;
+  decisionsPerDay: number;
+  priceUsdPerDay: number;
+  /** From `feeDrag`: the fee as a yearly share of the vault. */
+  annualShare: number;
+}): string {
+  const share = args.annualShare;
+  const pct =
+    Number.isFinite(share) && share <= 1 ? `${(share * 100).toFixed(share < 0.1 ? 1 : 0)}%` : "more than 100%";
+  return `${args.modelLabel}, ${args.activityLabel} (up to ${args.decisionsPerDay} decisions a day): $${args.priceUsdPerDay.toFixed(2)} a day while running, about ${pct} of your vault per year.`;
+}
+
+/**
+ * The fee line for the Start screen. The cap is a spending limit, not the price: the user is
+ * charged their plan's price each day; the cap is the most the contract will ever allow.
+ */
+export function describeFee(fees: FeeTerms, priceUsdPerDay?: number): string {
+  const free = fees.freeDays > 0 ? ` The first ${fees.freeDays} day${fees.freeDays === 1 ? " is" : "s are"} free.` : "";
+  const price =
+    priceUsdPerDay === undefined
+      ? ""
+      : `You pay your plan's price, $${priceUsdPerDay.toFixed(2)} a day in SUI, while the agent runs. `;
+  return `${price}Spending limit: the contract never lets us take more than ${sui(fees.dailyFeeCapMist)} in a day, and only to ${short(fees.treasury)}.${free} A paused or closed vault pays nothing.`;
 }
 
 /**
@@ -19,6 +44,8 @@ export function describeCreate(args: {
   fees: FeeTerms;
   depositMist: bigint;
   operator: string;
+  /** The plan's daily price (from `quotePlan`), shown next to the spending limit. */
+  priceUsdPerDay?: number;
 }): string[] {
   const { limits } = args;
   return [
@@ -26,7 +53,7 @@ export function describeCreate(args: {
     "You receive the owner key (OwnerCap): only it can withdraw, change limits, pause or revoke.",
     `The agent's operator (${short(args.operator)}) receives a trade-only key (TradeCap). It can buy and sell Blast launches with the vault's funds. It cannot withdraw.`,
     `On-chain limits: at most ${sui(limits.maxTrade)} per trade, ${sui(limits.maxPerLaunch)} per launch, ${sui(limits.maxDailySpend)} per day, ${limits.maxOpenPositions} open positions. Every trade needs slippage protection.`,
-    describeFee(args.fees),
+    describeFee(args.fees, args.priceUsdPerDay),
     "You can withdraw at any time, even while the agent is paused or our service is down.",
     "You can lose all of the funds in your vault.",
   ];
@@ -40,7 +67,7 @@ export function describeSetLimits(limits: OnChainLimits): string[] {
 
 export function describeSetFeeTerms(fees: Omit<FeeTerms, "freeDays">): string[] {
   return [
-    `Approve new fee terms: up to ${sui(fees.dailyFeeCapMist)} per day while the agent is running, paid only to ${short(fees.treasury)}.`,
+    `Approve a new daily spending limit of ${sui(fees.dailyFeeCapMist)}, paid only to ${short(fees.treasury)}. You are still charged only your plan's price.`,
   ];
 }
 

@@ -35,6 +35,7 @@ pnpm move:test
 
 - **TypeScript:** strict mode, `noUncheckedIndexedAccess`, ESM with `.ts` import extensions. Packages export source directly (`"exports": "./src/index.ts"`), so there's no build step inside the monorepo.
 - **Money is `bigint` MIST.** Never use floating-point SUI in accounting. Convert with `suiToMist` / `mistToSui` from `@blast-agents/shared`. Over JSON, u64 values travel as decimal strings.
+- **One source for prices and thresholds.** Plan prices, the fee cap, referral share, model prices and cost alarms come from `@blast-agents/shared` (`pricing.ts`, `models.ts`, `referrals.ts`, `economics.ts`). Never hard-code them elsewhere. Changing one is a pricing change: update `docs/ECONOMICS.md` and SPEC §1b.
 - **Validate at the edges.** Every API body, env var and model output is parsed with zod before use.
 - **Dry-run by default.** Any code path that signs must take an explicit `live` flag and must have simulated first.
 - **Move:** `sui move build/test --build-env mainnet --lint --warnings-are-errors` must be clean. Every new abort path needs a test. Every limit needs a passing test at its boundary and an aborting test just above it.

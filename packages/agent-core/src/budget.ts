@@ -1,48 +1,55 @@
 /**
- * Spend guards (SPEC 1b cost controls 2 and 4, SPEC 10). Pure, in-memory state; the worker
- * persists it in Redis in step 5. Every guard fails closed: when in doubt, hold.
+ * Spend guards (docs/ECONOMICS.md, SPEC 10). Pure, in-memory state; the worker persists it in
+ * Redis in step 5. Every guard fails closed: when in doubt, hold.
+ *
+ * There is no platform cap on decisions: each vault's budget is the plan its owner chose and
+ * prepaid (`quotePlan`). The platform guard exists only as a kill switch for incidents.
  */
-import { costAlarmThresholdUsd, maxDecisionsForMargin, PRICING } from "@blast-agents/shared";
+import { type PlanQuote, PRICING } from "@blast-agents/shared";
 
 const utcDay = (ms: number) => Math.floor(ms / 86_400_000);
 
-/** Hard cap: N AI decisions per vault per UTC day (SPEC 1b: 30). Past it, the agent holds. */
-export class DecisionCap {
+/** Per-vault decision budget for the UTC day, from the owner's plan. Past it, the agent holds. */
+export class DecisionBudget {
   readonly #used = new Map<string, { day: number; count: number }>();
-  constructor(public cap = 30) {}
 
-  remaining(vaultId: string, nowMs: number): number {
+  used(vaultId: string, nowMs: number): number {
     const e = this.#used.get(vaultId);
-    return e && e.day === utcDay(nowMs) ? Math.max(0, this.cap - e.count) : this.cap;
+    return e && e.day === utcDay(nowMs) ? e.count : 0;
   }
 
-  /** Reserves one decision; false means hold until tomorrow. */
-  tryConsume(vaultId: string, nowMs: number): boolean {
-    const day = utcDay(nowMs);
-    const e = this.#used.get(vaultId);
-    const count = e && e.day === day ? e.count : 0;
-    if (count >= this.cap) return false;
-    this.#used.set(vaultId, { day, count: count + 1 });
+  remaining(vaultId: string, budget: number, nowMs: number): number {
+    return Math.max(0, budget - this.used(vaultId, nowMs));
+  }
+
+  /** Reserves one decision against `budget` (the plan's decisions per day); false means hold. */
+  tryConsume(vaultId: string, budget: number, nowMs: number): boolean {
+    const count = this.used(vaultId, nowMs);
+    if (count >= budget) return false;
+    this.#used.set(vaultId, { day: utcDay(nowMs), count: count + 1 });
     return true;
   }
 }
 
 /**
- * Per-vault AI dollar ceiling per UTC day, from measured `usage` (docs/ECONOMICS.md
- * recommendation 5). A backstop against runaway loops that doesn't rely on decision counts:
- * at the default $0.45, a capped day still keeps the 30% margin on a $0.99 fee with gas.
+ * Per-vault AI dollar ceiling per UTC day: the cost the plan's price was built on, plus headroom.
+ * A backstop against runaway loops or a model whose real cost exceeds its catalog price.
  */
 export class VaultSpendLedger {
   readonly #spent = new Map<string, { day: number; usd: number }>();
-  constructor(public ceilingUsd = 0.45) {}
+
+  /** The ceiling for a plan: its expected daily cost × `headroom`. */
+  static ceilingFor(plan: Pick<PlanQuote, "costUsdPerDay">, headroom = 1.25): number {
+    return plan.costUsdPerDay * headroom;
+  }
 
   spentToday(vaultId: string, nowMs: number): number {
     const e = this.#spent.get(vaultId);
     return e && e.day === utcDay(nowMs) ? e.usd : 0;
   }
 
-  allow(vaultId: string, nowMs: number): boolean {
-    return this.spentToday(vaultId, nowMs) < this.ceilingUsd;
+  allow(vaultId: string, ceilingUsd: number, nowMs: number): boolean {
+    return this.spentToday(vaultId, nowMs) < ceilingUsd;
   }
 
   record(vaultId: string, costUsd: number, nowMs: number): void {
@@ -53,9 +60,9 @@ export class VaultSpendLedger {
 export type GuardState = "open" | "budget_exhausted" | "killed" | "out_of_credits";
 
 /**
- * Platform-wide guard: a daily AI budget with a kill switch. Trips on the budget, on a manual
- * kill, or on an OpenRouter 402 (empty balance). Budget trips reset on the next UTC day; kills
- * and out-of-credits need an operator to `reset()`.
+ * Platform kill switch: trips on a daily platform AI budget (an incident ceiling, set well above
+ * the sum of prepaid plans), on a manual kill, or on an OpenRouter 402 (empty balance). Budget
+ * trips reset on the next UTC day; kills and out-of-credits need an operator to `reset()`.
  */
 export class PlatformSpendGuard {
   #day = -1;
@@ -109,6 +116,13 @@ export function onModelFailure(guard: PlatformSpendGuard, failure: string): "hol
   return "hold";
 }
 
+/** Low-credit alert at about 7 days of spend. */
+export function creditRunway(args: { creditsRemainingUsd: number; trailingDailySpendUsd: number; alertDays?: number }) {
+  const days =
+    args.trailingDailySpendUsd > 0 ? args.creditsRemainingUsd / args.trailingDailySpendUsd : Number.POSITIVE_INFINITY;
+  return { daysLeft: days, alert: days < (args.alertDays ?? 7) };
+}
+
 /**
  * Cache-hit floor to alarm on: 80% of the best possible (k−1)/k for `k` decisions sharing a tick's
  * snapshot on one model. Below it, caching is silently failing.
@@ -117,20 +131,14 @@ export function cacheHitAlarmFloor(decisionsPerTickPerModel: number): number {
   return decisionsPerTickPerModel <= 1 ? 0 : 0.8 * ((decisionsPerTickPerModel - 1) / decisionsPerTickPerModel);
 }
 
-/** Low-credit alert (SPEC 1b: at ~7 days of spend). */
-export function creditRunway(args: { creditsRemainingUsd: number; trailingDailySpendUsd: number; alertDays?: number }) {
-  const days =
-    args.trailingDailySpendUsd > 0 ? args.creditsRemainingUsd / args.trailingDailySpendUsd : Number.POSITIVE_INFINITY;
-  return { daysLeft: days, alert: days < (args.alertDays ?? 7) };
-}
-
-export type CostAlarm = "cost_per_decision" | "cache_hit_rate" | "decision_cap_lowered";
+export type CostAlarm = "referred_margin" | "cost_above_pricing" | "cache_hit_rate";
 
 /**
- * Rolling cost monitor. Alarms when the average cost per decision passes the level that keeps the
- * pricing rule (30% worst-case margin at the cap), or when the cache hit rate falls under a floor:
- * a silent cache failure roughly doubles AI cost but would stay under a flat $0.022 alarm.
- * It also returns the decision cap the worker should use given measured costs.
+ * Rolling cost monitor for one model. Compares the measured cost per decision with the cost its
+ * price was built on (`decisionCostUsd`) and alarms when:
+ * - `referred_margin`: the margin on a referred user, at measured cost, falls under `minReferredMargin` (20%);
+ * - `cost_above_pricing`: measured cost exceeds the pricing assumption (re-price before it bites);
+ * - `cache_hit_rate`: caching is failing (a silent ~2× cost increase on premium models).
  */
 export class CostMonitor {
   #n = 0;
@@ -140,9 +148,11 @@ export class CostMonitor {
 
   constructor(
     readonly opts: {
-      feeUsd?: number;
-      decisionCap: number;
-      gasUsdAtCap: number;
+      /** Cost per decision (AI + gas) the model's price assumes. */
+      pricedCostPerDecisionUsd: number;
+      /** Gas share of that cost, added to the measured AI cost. */
+      gasUsdPerDecision?: number;
+      minReferredMargin?: number;
       minCacheHitRate: number;
       /** Ignore alarms until this many decisions are in the window. */
       minSample?: number;
@@ -157,26 +167,21 @@ export class CostMonitor {
   }
 
   report() {
-    const feeUsd = this.opts.feeUsd ?? PRICING.feeUsdPerDay;
-    const avgCostUsd = this.#n ? this.#costUsd / this.#n : 0;
+    const gas = this.opts.gasUsdPerDecision ?? PRICING.gasUsdPerDecision;
+    const measured = this.#n ? this.#costUsd / this.#n + gas : 0;
     const cacheHitRate = this.#inputTokens ? this.#cachedTokens / this.#inputTokens : 0;
-    const thresholdUsd = costAlarmThresholdUsd({
-      feeUsd,
-      decisionCap: this.opts.decisionCap,
-      gasUsdAtCap: this.opts.gasUsdAtCap,
-    });
-    const recommendedCap = avgCostUsd
-      ? Math.min(
-          this.opts.decisionCap,
-          maxDecisionsForMargin({ feeUsd, costPerDecisionUsd: avgCostUsd, gasUsdAtCap: this.opts.gasUsdAtCap }),
-        )
-      : this.opts.decisionCap;
+    // The price per decision implied by the pricing rule for this cost assumption.
+    const keep = 1 - PRICING.referralShare - PRICING.minMarginAfterReferral;
+    const pricePerDecision = this.opts.pricedCostPerDecisionUsd / keep;
+    const referredMargin = measured
+      ? (pricePerDecision * (1 - PRICING.referralShare) - measured) / pricePerDecision
+      : 1;
     const alarms: CostAlarm[] = [];
     if (this.#n >= (this.opts.minSample ?? 50)) {
-      if (avgCostUsd > thresholdUsd) alarms.push("cost_per_decision");
+      if (referredMargin < (this.opts.minReferredMargin ?? 0.2)) alarms.push("referred_margin");
+      if (measured > this.opts.pricedCostPerDecisionUsd) alarms.push("cost_above_pricing");
       if (cacheHitRate < this.opts.minCacheHitRate) alarms.push("cache_hit_rate");
-      if (recommendedCap < this.opts.decisionCap) alarms.push("decision_cap_lowered");
     }
-    return { decisions: this.#n, avgCostUsd, cacheHitRate, thresholdUsd, recommendedCap, alarms };
+    return { decisions: this.#n, measuredCostPerDecisionUsd: measured, cacheHitRate, referredMargin, alarms };
   }
 }

@@ -1,21 +1,34 @@
+import { catalogModel, decisionCostUsd, quotePlan } from "@blast-agents/shared";
 import { describe, expect, it } from "vitest";
-import { CostMonitor, creditRunway, DecisionCap, PlatformSpendGuard } from "../src/budget.ts";
+import { CostMonitor, creditRunway, DecisionBudget, PlatformSpendGuard, VaultSpendLedger } from "../src/budget.ts";
 
 const DAY = 86_400_000;
 
-describe("DecisionCap", () => {
-  it("allows 30 decisions per vault per UTC day, then holds until tomorrow", () => {
-    const cap = new DecisionCap(30);
-    for (let i = 0; i < 30; i++) expect(cap.tryConsume("v", 10)).toBe(true);
-    expect(cap.tryConsume("v", 10)).toBe(false);
-    expect(cap.tryConsume("w", 10)).toBe(true);
-    expect(cap.remaining("v", DAY + 1)).toBe(30);
-    expect(cap.tryConsume("v", DAY + 1)).toBe(true);
+describe("DecisionBudget", () => {
+  it("allows each vault exactly its own plan's decisions per UTC day", () => {
+    const b = new DecisionBudget();
+    for (let i = 0; i < 6; i++) expect(b.tryConsume("small", 6, 10)).toBe(true);
+    expect(b.tryConsume("small", 6, 10)).toBe(false);
+    for (let i = 0; i < 288; i++) expect(b.tryConsume("big", 288, 10)).toBe(true);
+    expect(b.remaining("small", 6, DAY + 1)).toBe(6);
+  });
+});
+
+describe("VaultSpendLedger", () => {
+  it("stops a vault at 125% of its plan's expected daily cost", () => {
+    const plan = quotePlan("claude", { level: "steady" });
+    const ceiling = VaultSpendLedger.ceilingFor(plan);
+    const l = new VaultSpendLedger();
+    l.record("v", ceiling - 0.001, 0);
+    expect(l.allow("v", ceiling, 0)).toBe(true);
+    l.record("v", 0.01, 0);
+    expect(l.allow("v", ceiling, 0)).toBe(false);
+    expect(l.allow("v", ceiling, DAY)).toBe(true);
   });
 });
 
 describe("PlatformSpendGuard", () => {
-  it("trips at the daily budget and reopens the next day", () => {
+  it("trips at the incident budget and reopens the next day", () => {
     const g = new PlatformSpendGuard(10);
     g.record(9.99, 0);
     expect(g.allow(0)).toBe(true);
@@ -41,27 +54,25 @@ describe("creditRunway", () => {
 });
 
 describe("CostMonitor", () => {
-  const opts = { decisionCap: 30, gasUsdAtCap: 0.08, minCacheHitRate: 0.5, minSample: 10 };
+  const priced = decisionCostUsd(catalogModel("claude")); // AI at 50% hits + gas
+  const opts = { pricedCostPerDecisionUsd: priced, minCacheHitRate: 0.5, minSample: 10 };
 
-  it("is quiet when cached costs are normal", () => {
+  it("is quiet when cached costs are at or below the pricing assumption", () => {
     const m = new CostMonitor(opts);
-    for (let i = 0; i < 20; i++) m.record({ costUsd: 0.01, inputTokens: 6_000, cachedTokens: 5_000 });
+    for (let i = 0; i < 20; i++) m.record({ costUsd: 0.0104, inputTokens: 6_000, cachedTokens: 4_800 });
     expect(m.report().alarms).toEqual([]);
-    expect(m.report().recommendedCap).toBe(30);
+    expect(m.report().referredMargin).toBeGreaterThan(0.3);
   });
 
-  it("flags a silent cache failure even while cost is under $0.022", () => {
+  it("flags a silent cache failure and a cost above what the price assumed", () => {
     const m = new CostMonitor(opts);
-    for (let i = 0; i < 20; i++) m.record({ costUsd: 0.0206, inputTokens: 6_000, cachedTokens: 0 });
-    const r = m.report();
-    expect(r.alarms).toContain("cache_hit_rate");
-    expect(r.alarms).toContain("cost_per_decision");
+    for (let i = 0; i < 20; i++) m.record({ costUsd: 0.0205, inputTokens: 6_000, cachedTokens: 0 });
+    expect(m.report().alarms).toEqual(expect.arrayContaining(["cache_hit_rate", "cost_above_pricing"]));
   });
 
-  it("recommends a lower cap when costs rise", () => {
+  it("flags when the referred margin falls under 20%", () => {
     const m = new CostMonitor(opts);
     for (let i = 0; i < 20; i++) m.record({ costUsd: 0.03, inputTokens: 6_000, cachedTokens: 5_000 });
-    expect(m.report().recommendedCap).toBe(20);
-    expect(m.report().alarms).toContain("decision_cap_lowered");
+    expect(m.report().alarms).toContain("referred_margin");
   });
 });

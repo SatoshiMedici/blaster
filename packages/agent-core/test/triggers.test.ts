@@ -1,5 +1,12 @@
+import { resolveActivity } from "@blast-agents/shared";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TRIGGER_CONFIG, evaluateTriggers, initialTriggerState, recordDecision } from "../src/triggers.ts";
+import {
+  DEFAULT_TRIGGER_CONFIG,
+  evaluateTriggers,
+  initialTriggerState,
+  recordDecision,
+  triggerConfigFor,
+} from "../src/triggers.ts";
 
 const MIN = 60_000;
 const market = (...ls: Array<[string, number]>) =>
@@ -43,9 +50,18 @@ describe("evaluateTriggers", () => {
     expect(evaluateTriggers(s, market(["a", 10]), [{ launch_id: "a", value_sui: 9.5 }], 1 * MIN).fire).toBe(false);
   });
 
-  it("checks in every 4 hours", () => {
+  it("checks in on the plan's interval", () => {
     const s = recordDecision(market(["a", 10]), [], 0, initialTriggerState());
-    expect(evaluateTriggers(s, market(["a", 10]), [], 4 * 60 * MIN).reasons).toEqual(["scheduled"]);
+    expect(evaluateTriggers(s, market(["a", 10]), [], 2 * 60 * MIN).reasons).toEqual(["scheduled"]);
+    const watchful = triggerConfigFor(resolveActivity({ level: "watchful" }));
+    expect(evaluateTriggers(s, market(["a", 10]), [], 2 * 60 * MIN, watchful).fire).toBe(false);
+    expect(evaluateTriggers(s, market(["a", 10]), [], 6 * 60 * MIN, watchful).reasons).toEqual(["scheduled"]);
+  });
+
+  it("an intense plan reacts to new launches within minutes", () => {
+    const intense = triggerConfigFor(resolveActivity({ level: "intense" }));
+    const s = recordDecision(market(["a", 10]), [], 0, initialTriggerState());
+    expect(evaluateTriggers(s, market(["a", 10], ["b", 2]), [], 2 * MIN, intense).fire).toBe(true);
   });
 
   it("forgets launches that left the market", () => {

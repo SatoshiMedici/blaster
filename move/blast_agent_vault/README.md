@@ -43,11 +43,11 @@ The split lets the unit tests run every limit and every accounting path against 
 ## Daily fee (SPEC §1b)
 
 - `create(limits, daily_fee_cap, treasury, free_days, coin, operator, clock)` is the one-signature Start call. The user approves the fee cap, the treasury and the free period in the same signature that creates the vault.
-- `last_fee_day` is the last calendar day already paid for or covered by the free period. `create` sets it to `today + free_days − 1`, so with `free_days = 3` (the trial) the creation day and the two days after it are free. The API passes `free_days = 0` when the wallet already used its trial or the deposit is under the $250 minimum (`trialDaysFor`).
+- `last_fee_day` is the last calendar day already paid for or covered by the free period. `create` sets it to `today + free_days − 1`, so with `free_days = 3` (the trial) the creation day and the two days after it are free. The API passes `free_days = 0` when the wallet already used its trial (`trialDaysFor`).
 - `charge_fee(vault, trade_cap, amount, clock)` needs `today > last_fee_day`, `0 < amount ≤ daily_fee_cap`, an authorized and unpaused agent, and enough SUI. It then sets `last_fee_day = today` and pays `vault.treasury`. Skipped days are never back-charged.
 - `set_fee_terms(vault, owner_cap, daily_fee_cap, treasury)` is the owner re-approving new terms. Setting the cap to `0` turns the fee off.
 - If the vault holds too little SUI, the charge aborts. The operator then calls `pause_by_agent(reason = 1)` and tells the user to top up or withdraw. It never sells to pay.
-- The operator charges at the start of each day (prepaid) the USD-equivalent of $0.99. The cap is about 2× that at approval, so SUI price falls don't block collection (see docs/ECONOMICS.md).
+- The operator charges the user's plan price at the start of each day (prepaid), converted to SUI. `daily_fee_cap` is the user's daily spending limit, set at 3× the plan price at approval, so SUI price falls don't block collection (see docs/ECONOMICS.md).
 
 ## Limits accounting
 

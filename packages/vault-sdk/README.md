@@ -1,12 +1,19 @@
 # `@blast-agents/vault-sdk`
 
-TypeScript bindings for [`blast_agent_vault`](../../move/blast_agent_vault/README.md) (SPEC §13 step 3): PTB builders, BCS decoders, a vault reader, and plain-words summaries of what a user is about to sign (`describeCreate`, `describeFee`, `describeSetLimits`, `describeSetFeeTerms`, `describeEmptyVault`). **Nothing here signs or submits.**
+TypeScript bindings for [`blast_agent_vault`](../../move/blast_agent_vault/README.md) (SPEC §13 step 3): PTB builders, BCS decoders, a vault reader, and plain-words summaries of what a user is about to sign (`describePlan`, `describeCreate`, `describeFee`, `describeSetLimits`, `describeSetFeeTerms`, `describeEmptyVault`). **Nothing here signs or submits.**
 
 ## Builders
 
 ```ts
 import { Transaction } from "@mysten/sui/transactions";
-import { RISK_PRESETS, quoteFeeTerms, settingsToLimits, suiToMist, trialDaysFor } from "@blast-agents/shared";
+import {
+  RISK_PRESETS,
+  quoteFeeTerms,
+  quotePlan,
+  settingsToLimits,
+  suiToMist,
+  trialDaysFor,
+} from "@blast-agents/shared";
 import { VaultTransactions, describeCreate } from "@blast-agents/vault-sdk";
 
 const vt = new VaultTransactions({ packageId, originalPackageId }); // Blast objects default to mainnet
@@ -14,13 +21,14 @@ const vt = new VaultTransactions({ packageId, originalPackageId }); // Blast obj
 // Start (one user signature, SPEC 1b): vault, deposit, limits, fee terms, TradeCap to the operator.
 const deposit = suiToMist("100");
 const limits = settingsToLimits(RISK_PRESETS.balanced.settings, deposit);
-// Fee terms come from the server: cap ≈ 2× today's $0.99 in SUI; 3 free days once per wallet at ≥ $250.
-const { dailyFeeCapMist } = quoteFeeTerms(suiUsd);
-const freeDays = trialDaysFor({ walletHasUsedTrial, depositMist: deposit, suiUsd });
+// The server prices the plan and sets the fee terms: cap = 3× the plan's daily price in SUI; 3 free days once per wallet.
+const plan = quotePlan("claude", { level: "steady" });
+const { dailyFeeCapMist } = quoteFeeTerms(plan.priceUsdPerDay, suiUsd);
+const freeDays = trialDaysFor({ walletHasUsedTrial });
 const fees = { dailyFeeCapMist: dailyFeeCapMist.toString(), treasury, freeDays };
 const tx = new Transaction();
 vt.create(tx, { limits, fees, depositMist: deposit, operator, owner: userAddress });
-describeCreate({ limits, fees, depositMist: deposit, operator }); // show these lines before signing
+describeCreate({ limits, fees, depositMist: deposit, operator, priceUsdPerDay: plan.priceUsdPerDay }); // show before signing
 ```
 
 | Method                           | Signer   | Move call                                                                                                                |
@@ -52,7 +60,7 @@ const due = isFeeDue(vault); // true when charge_fee would accept a charge today
 const many = await readVaults(client, vaultIds); // batched multi-gets: 50 vaults per RPC call
 ```
 
-`decodeVault(bytes)` is the pure BCS decoder. A test checks the BCS layouts against the field order in `vault.move`, so the two can't drift apart silently.
+Pass `pkg` to `readVault` / `readVaults` whenever a vault ID comes from a user, so look-alike objects from other packages are refused. `decodeVault(bytes)` is the pure BCS decoder. A test checks the BCS layouts against the field order in `vault.move`, so the two can't drift apart silently.
 
 ## Config
 

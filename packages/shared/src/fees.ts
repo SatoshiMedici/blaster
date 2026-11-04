@@ -1,16 +1,15 @@
 import { z } from "zod";
 import { u64String } from "./limits.ts";
-
 import { PRICING } from "./pricing.ts";
 
-/** Free trial days (SPEC 1b: 3 days, once per wallet, minimum deposit required). See `trialDaysFor`. */
+/** Free trial days: 3, once per wallet, no deposit condition. See `trialDaysFor`. */
 export const DEFAULT_FREE_DAYS = PRICING.trialDays;
 
 /**
- * Fee terms the user approves on the Start screen and that the vault stores on-chain (SPEC 1b):
- * "up to `dailyFeeCap` per day while running", paid only to `treasury`, nothing for `freeDays`.
- * The cap is set by `quoteFeeTerms` (2× the day's $0.99 in SUI); the operator charges only the
- * day's USD-equivalent (`decideDailyFee`).
+ * Fee terms the user approves with their plan and that the vault stores on-chain: "up to
+ * `dailyFeeCap` per day while running", paid only to `treasury`, nothing for `freeDays`. The cap
+ * comes from `quoteFeeTerms` (3× the plan's daily price in SUI); the operator charges only the
+ * plan's USD price each day (`decideDailyFee`).
  */
 export const FeeTerms = z.object({
   dailyFeeCapMist: u64String,

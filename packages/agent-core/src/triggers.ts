@@ -7,13 +7,15 @@
  * - `new_launch`: a tradable launch this vault hasn't been shown yet
  * - `progress_cross`: a launch's curve crossed 50% or 80% since the vault last decided
  * - `position_move`: a held position's value moved more than 10% since the last decision
- * - `scheduled`: 4 hours since the last decision
+ * - `scheduled`: the plan's check-in interval since the last decision
  *
- * Cost note (docs/ECONOMICS.md): new launches arrive for every vault at once, so they would burn
- * the daily decision cap early. Non-urgent triggers are therefore coalesced: they wait until
- * `minGapMs` after the last decision, and the next decision covers all launches seen meanwhile.
- * `vault_created` and `position_move` are urgent and skip the gap (risk on held money).
+ * How often the agent may act is the owner's choice (their activity level, `triggerConfigFor`).
+ * Non-urgent triggers coalesce: they wait until the plan's `minGapMs` after the last decision, and
+ * the next decision covers every launch seen meanwhile, so a burst of launches doesn't spend the
+ * whole day's budget at once. `vault_created` and `position_move` are urgent and skip the gap
+ * (risk on held money); they still count against the plan's daily budget.
  */
+import type { ActivityLevel } from "@blast-agents/shared";
 
 export type TriggerReason = "vault_created" | "new_launch" | "progress_cross" | "position_move" | "scheduled";
 
@@ -27,12 +29,18 @@ export type TriggerConfig = {
   minGapMs: number;
 };
 
+/** Matches the "steady" activity level. */
 export const DEFAULT_TRIGGER_CONFIG: TriggerConfig = {
   progressThresholdsPct: [50, 80],
   positionMovePct: 10,
-  scheduledEveryMs: 4 * 60 * 60_000,
+  scheduledEveryMs: 2 * 60 * 60_000,
   minGapMs: 30 * 60_000,
 };
+
+/** Trigger timing for the owner's activity level. */
+export function triggerConfigFor(level: Pick<ActivityLevel, "scheduledEveryMs" | "minGapMs">): TriggerConfig {
+  return { ...DEFAULT_TRIGGER_CONFIG, scheduledEveryMs: level.scheduledEveryMs, minGapMs: level.minGapMs };
+}
 
 /** What the vault "knew" at its last decision. Persisted per vault (Redis/Postgres in step 5). */
 export type VaultTriggerState = {

@@ -7,6 +7,7 @@ import {
   BCS_FIELD_ORDER,
   decodeVault,
   describeCreate,
+  describePlan,
   effectiveSpentToday,
   isFeeDue,
   MAINNET_BLAST_OBJECTS,
@@ -243,7 +244,7 @@ describe("readVaults", () => {
         },
       },
     };
-    const out = await readVaults(client as never, ["a", "b", "bad"], 2);
+    const out = await readVaults(client as never, ["a", "b", "bad"], { perRequest: 2, pkg: PKG });
     expect(calls).toEqual([2, 1]);
     expect(out[0]).toMatchObject({
       suiMist: 7n,
@@ -253,6 +254,10 @@ describe("readVaults", () => {
       initialSharedVersion: "7",
     });
     expect(out[2]).toBeInstanceOf(Error);
+    // A look-alike AgentVault from another package is refused when `pkg` is given.
+    const other = { ...PKG, originalPackageId: `0x${"f".repeat(64)}` };
+    const [fake] = await readVaults(client as never, ["a"], { pkg: other });
+    expect(fake).toBeInstanceOf(Error);
   });
 });
 
@@ -273,9 +278,30 @@ describe("helpers", () => {
     expect(isFeeDue({ lastFeeDay: day }, Number(day + 1n) * 86_400_000)).toBe(true);
   });
 
-  it("describeCreate states custody, limits, fee and risk in plain words", () => {
-    const lines = describeCreate({ limits, fees, depositMist: suiToMist(100), operator: OPERATOR }).join("\n");
-    expect(lines).toContain("up to 0.200 SUI per day while the agent is running, free for the first 3 days");
+  it("describePlan states the price and its yearly share of the vault", () => {
+    const line = describePlan({
+      modelLabel: "Claude Sonnet 5.5",
+      activityLabel: "Steady",
+      decisionsPerDay: 24,
+      priceUsdPerDay: 1.01,
+      annualShare: 0.0737,
+    });
+    expect(line).toBe(
+      "Claude Sonnet 5.5, Steady (up to 24 decisions a day): $1.01 a day while running, about 7.4% of your vault per year.",
+    );
+  });
+
+  it("describeCreate states custody, limits, price, spending limit and risk in plain words", () => {
+    const lines = describeCreate({
+      limits,
+      fees,
+      depositMist: suiToMist(100),
+      operator: OPERATOR,
+      priceUsdPerDay: 1.01,
+    }).join("\n");
+    expect(lines).toContain("You pay your plan's price, $1.01 a day in SUI");
+    expect(lines).toContain("never lets us take more than 0.200 SUI in a day");
+    expect(lines).toContain("The first 3 days are free.");
     expect(lines).toContain("100.000 SUI");
     expect(lines).toContain("It cannot withdraw.");
     expect(lines).toContain("5.000 SUI per trade");

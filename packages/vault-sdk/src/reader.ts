@@ -2,6 +2,7 @@ import type { OnChainLimits } from "@blast-agents/shared";
 import type { ClientWithCoreApi } from "@mysten/sui/client";
 import { normalizeStructTag } from "@mysten/sui/utils";
 import { AgentVaultBcs, BalanceBcs, TypeNameBcs } from "./bcs.ts";
+import { type VaultPackage, vaultType } from "./config.ts";
 
 export type VaultState = {
   objectId: string;
@@ -57,9 +58,19 @@ type VaultObject = {
   content: Uint8Array;
 };
 
-async function toVaultState(client: ClientWithCoreApi, object: VaultObject): Promise<VaultState> {
-  if (!object.type.endsWith("::vault::AgentVault"))
-    throw new Error(`${object.objectId} is not an AgentVault (${object.type})`);
+/**
+ * Only our package's `AgentVault` is accepted: a look-alike struct from another package would
+ * otherwise decode fine and feed attacker-chosen state to the API or the worker.
+ */
+function assertVaultType(object: VaultObject, pkg: VaultPackage | undefined) {
+  const ok = pkg
+    ? normalizeStructTag(object.type) === normalizeStructTag(vaultType(pkg))
+    : object.type.endsWith("::vault::AgentVault");
+  if (!ok) throw new Error(`${object.objectId} is not a blast_agent_vault AgentVault (${object.type})`);
+}
+
+async function toVaultState(client: ClientWithCoreApi, object: VaultObject, pkg?: VaultPackage): Promise<VaultState> {
+  assertVaultType(object, pkg);
   const v = decodeVault(object.content);
   // Dynamic fields are only read when the vault actually holds something.
   const [tokens, positionCostMist] = await Promise.all([
@@ -92,10 +103,13 @@ async function toVaultState(client: ClientWithCoreApi, object: VaultObject): Pro
   };
 }
 
-/** Reads a vault, its token balances and position costs from chain. */
-export async function readVault(client: ClientWithCoreApi, vaultId: string): Promise<VaultState> {
+/**
+ * Reads a vault, its token balances and position costs from chain. Pass `pkg` wherever the ID
+ * comes from a user (e.g. `POST /vaults/:id/confirm`) so only our package's vaults are accepted.
+ */
+export async function readVault(client: ClientWithCoreApi, vaultId: string, pkg?: VaultPackage): Promise<VaultState> {
   const { object } = await client.core.getObject({ objectId: vaultId, include: { content: true } });
-  return toVaultState(client, object as unknown as VaultObject);
+  return toVaultState(client, object as unknown as VaultObject, pkg);
 }
 
 /**
@@ -106,8 +120,9 @@ export async function readVault(client: ClientWithCoreApi, vaultId: string): Pro
 export async function readVaults(
   client: ClientWithCoreApi,
   vaultIds: string[],
-  perRequest = 50,
+  opts: { perRequest?: number; pkg?: VaultPackage } = {},
 ): Promise<Array<VaultState | Error>> {
+  const perRequest = opts.perRequest ?? 50;
   const out: Array<VaultState | Error> = [];
   for (let i = 0; i < vaultIds.length; i += perRequest) {
     const { objects } = await client.core.getObjects({
@@ -116,7 +131,7 @@ export async function readVaults(
     });
     const states = await Promise.all(
       objects.map((o) =>
-        o instanceof Error ? o : toVaultState(client, o as unknown as VaultObject).catch((e: Error) => e),
+        o instanceof Error ? o : toVaultState(client, o as unknown as VaultObject, opts.pkg).catch((e: Error) => e),
       ),
     );
     out.push(...states);

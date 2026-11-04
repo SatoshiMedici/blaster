@@ -2,88 +2,75 @@
 
 Tracks [SPEC §13](../SPEC.md#13-build-order-for-claude-code). Each step ends with tests passing and a short demo note.
 
-| #   | Step                                                | Status                    | Notes                                                                                                                                                                                     |
-| --- | --------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Monorepo setup                                      | ✅ Done                   | pnpm workspaces, Biome, TypeScript strict, Vitest, GitHub Actions (TS job + Move job). `apps/web` and `apps/api` are placeholders until steps 6–7.                                        |
-| 2   | Move package                                        | 🟡 Mostly done            | SPEC §1b + §5 implemented (incl. daily fee, agent self-pause), 60 unit tests, CI custody check. **Open:** the mainnet dev-inspect of `buy` / `sell` against a real launch. Not published. |
-| 3   | TypeScript vault bindings                           | ✅ Done                   | `packages/vault-sdk`: builders for every vault call (incl. `chargeFee`, `setFeeTerms`), `emptyVault`, BCS reader, signing summaries; 17 offline tests.                                    |
-| 4   | Indexer and DB                                      | ⏳ Next                   |                                                                                                                                                                                           |
-| 5   | Agent workers (vaults, queue, KMS, dry-run default) | ⏳                        | `agent-core` is still the wallet-based arena starter                                                                                                                                      |
-| 6   | API                                                 | ⏳                        |                                                                                                                                                                                           |
-| 7   | Web app                                             | ⏳                        |                                                                                                                                                                                           |
-| 8   | Stats engine                                        | ⏳                        |                                                                                                                                                                                           |
-| 9   | Leaderboard and platform stats pages                | ⏳                        |                                                                                                                                                                                           |
-| 10  | Hardening                                           | ⏳                        |                                                                                                                                                                                           |
-| 11  | Arena launch (team vaults)                          | ⛔ Needs audit + approval |                                                                                                                                                                                           |
-| 12  | User deposits                                       | ⛔ Needs legal sign-off   |                                                                                                                                                                                           |
+## Status
 
-## Demo notes
+| #   | Step                                                | Status                      | Notes                                                                                                                                                                                          |
+| --- | --------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Monorepo setup                                      | ✅ Done                     | pnpm workspaces, Biome, strict TypeScript, Vitest, GitHub Actions (TypeScript job and Move job). `apps/web` and `apps/api` are placeholders until steps 6–7.                                   |
+| 2   | Move package                                        | 🟡 Mostly done              | SPEC §1b and §5: custody, on-chain limits, daily fee, agent self-pause; 60 unit tests; CI custody check. **Open:** mainnet dev-inspect of `buy` / `sell` against a real launch. Not published. |
+| 3   | TypeScript vault bindings                           | ✅ Done                     | `packages/vault-sdk`: builders for every vault call, batched fee charges and reads, BCS reader with package check, signing summaries; 21 tests.                                                |
+| —   | Pricing, models, referrals (SPEC §1b rev. 3)        | ✅ Done                     | `packages/shared` (plan pricing, model catalog, referrals) and `packages/agent-core` (triggers, screening, budgets, OpenRouter client); see [ECONOMICS.md](ECONOMICS.md).                      |
+| 4   | Indexer and DB                                      | ⏳ Next                     |                                                                                                                                                                                                |
+| 5   | Agent workers (vaults, queue, KMS, dry-run default) | ⏳                          | The cost-control modules are ready; the trading loop is still the wallet-based arena starter.                                                                                                  |
+| 6   | API                                                 | ⏳                          |                                                                                                                                                                                                |
+| 7   | Web app                                             | ⏳                          |                                                                                                                                                                                                |
+| 8   | Stats engine                                        | ⏳                          |                                                                                                                                                                                                |
+| 9   | Leaderboard and platform stats pages                | ⏳                          |                                                                                                                                                                                                |
+| 10  | Hardening                                           | ⏳                          |                                                                                                                                                                                                |
+| 11  | Arena launch (team vaults)                          | ⛔ Needs audit and approval |                                                                                                                                                                                                |
+| 12  | User deposits                                       | ⛔ Needs legal sign-off     |                                                                                                                                                                                                |
 
-### Step 1–2
+## Demo
 
 ```bash
 pnpm install && pnpm lint && pnpm typecheck && pnpm test
 ```
 
+That runs 88 TypeScript tests: shared 42, vault-sdk 21, agent-core 25.
+
 ```bash
 pnpm move:test
 ```
 
-The output shows 60/60 Move tests passing and `custody check: OK (… only charge_fee pays out, to vault.treasury)`.
+That runs 60 Move tests, then `custody check: OK (… only charge_fee pays out, to vault.treasury)`.
 
-### Step 3
+## SPEC §1b coverage
 
-```bash
-pnpm --filter @blast-agents/vault-sdk test
-```
-
-20 tests: PTB shape, shared-object mutability, call order, slippage guards, fee batching, batched reads, BCS layout checked against `vault.move`.
-
-## SPEC §1b (locked UX and billing), how it is covered
-
-| Requirement                                                                                                              | Where                                                                                        | Status                                                             |
-| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| One signature Start PTB: create, deposit, limits, authorize agent, fee cap                                               | `vault::create`, `VaultTransactions.create`                                                  | ✅                                                                 |
-| `daily_fee_cap`, fixed `treasury`, `last_fee_day`; `charge_fee`; `set_fee_terms`                                         | `move/blast_agent_vault`                                                                     | ✅ 16 tests, CI guard                                              |
-| 3-day trial, once per wallet, only at the $250 minimum                                                                   | `create(…, free_days)`; `trialDaysFor`, `minDepositMist`, `DEFAULT_FREE_DAYS = 3`            | ✅ on-chain free days; once-per-wallet is an API/DB check (step 6) |
-| $0.99/day in SUI, prepaid; on-chain cap ≈ 2× the day's fee                                                               | `quoteFeeTerms`, `decideDailyFee`, `aggregatePrice`, `checkDailyPriceMove`, `feeCapHeadroom` | ✅ pure functions + tests; fee job in step 5                       |
-| Cost controls: triggers, 30/day cap, cached prefix, platform budget, kill switch, low-credit alert                       | `agent-core`: `triggers.ts`, `screener.ts`, `budget.ts`, `openrouter.ts`                     | ✅ modules + tests; wired into the worker in step 5                |
-| Pricing rule: worst-case day ≥ 30% margin; alarms derived from it                                                        | `economics.ts` (`costAlarmThresholdUsd`, `maxDecisionsForMargin`), `CostMonitor`             | ✅                                                                 |
-| Models via OpenRouter (one key, USDC credits)                                                                            | `OpenRouterTrader`, `DEFAULT_MODELS` slugs                                                   | ✅                                                                 |
-| Fee never sells tokens; low balance pauses the agent and notifies                                                        | on-chain abort + `pause_by_agent(1)`; notice in step 6                                       | 🟡 on-chain done, notifier pending                                 |
-| Operator charges once a day; a paused or closed vault pays nothing                                                       | `chargeFee` builder; on-chain pause/revoke checks                                            | 🟡 scheduler in step 5                                             |
-| "Up to X SUI per day while running" on the Start screen; plain-language signing                                          | `describeFee`, `describeCreate`, `describeSetFeeTerms`                                       | ✅ text; UI in step 7                                              |
-| Fees paid next to P&L; P&L net of fees                                                                                   | stats engine (step 8), dashboard (step 7); `FeeCharged` event for the indexer                | ⏳                                                                 |
-| Connect via dapp-kit **or** Google / X through zkLogin (Enoki)                                                           | web app                                                                                      | ⏳ step 7                                                          |
-| 3 screens: Connect, Choose (model cards, 3-position risk slider defaulting to Balanced, deposit with min and max), Start | web app; `DEFAULT_PRESET = "balanced"`                                                       | ⏳ step 7                                                          |
-| One-tap model switch, no signature                                                                                       | API `PATCH /vaults/:id`                                                                      | ⏳ step 6                                                          |
-| "Withdraw everything as SUI" with a no-backend "withdraw as-is" fallback                                                 | `emptyVault` (fallback) ✅; operator sell-then-withdraw ⏳ step 5–6                          | 🟡                                                                 |
-| Opt-in email or Telegram notifications                                                                                   | new: API + worker                                                                            | ⏳ step 6+                                                         |
-
-### Pricing and cost controls (SPEC_2 update)
-
-```bash
-pnpm test
-```
-
-70 TypeScript tests. `economics.test.ts` reproduces SPEC §1b's cost table, margins and break-even, and shows why the $0.022 alarm is too loose. The trigger, budget, screener and OpenRouter tests cover the cost controls.
+| Requirement                                                                                                    | Where                                                                                  | Status                                            |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| One-signature Start PTB: create, deposit, limits, authorize agent, fee terms                                   | `vault::create`, `VaultTransactions.create`, `describeCreate`                          | ✅                                                |
+| Plan = model × activity, chosen by the user; no platform cap on decisions                                      | `activity.ts`, `quotePlan`, `DecisionBudget`, `triggerConfigFor`                       | ✅                                                |
+| Price from cost: ≥ 30% margin after the 30% referral on every plan                                             | `quotePlan` (tested for every model × level)                                           | ✅                                                |
+| No minimum deposit; fee drag shown and a plan recommended                                                      | `feeDrag`, `recommendPlan`, `describePlan`                                             | ✅ logic; UI in step 7                            |
+| Prepaid daily fee in SUI; capped after a SUI crash; pause, never sell, when short                              | `decideDailyFee`, `chargeFee`, `pauseByAgent`; on-chain `charge_fee`, `pause_by_agent` | ✅ logic; fee job in step 5                       |
+| Fee cap = the user's daily spending limit (3× plan price); re-approval                                         | `quoteFeeTerms`, `planChangeNeedsSignature`, `feeCapHeadroom`, `set_fee_terms`         | ✅                                                |
+| 3-day trial once per wallet, ≤ 24 decisions/day                                                                | `trialDaysFor`, `trialDecisionsPerDay`, `create(…, free_days)`                         | ✅ logic; once-per-wallet record in step 6        |
+| Curated models via OpenRouter, priced per model, live price check                                              | `MODEL_CATALOG`, `reconcileCatalog`, `OpenRouterTrader`                                | ✅ 7 models; 5 await live price confirmation      |
+| Referrals: 30% of collected fees                                                                               | `bindReferral`, `accrueReferrals`, `proposePayouts`                                    | ✅ logic; storage in step 4, payout job in step 6 |
+| Cost controls: triggers, screening, cached prefix, plan budgets, kill switch, low-credit and re-pricing alarms | `agent-core`: `triggers.ts`, `screener.ts`, `budget.ts`, `openrouter.ts`               | ✅ modules; wired in step 5                       |
+| Fees paid next to P&L; P&L net of fees                                                                         | `FeeCharged` event; stats (step 8), dashboard (step 7)                                 | ⏳                                                |
+| Notifications (email, Telegram): trades, daily summary, halt, low balance                                      | API and worker                                                                         | ⏳ step 6                                         |
+| Connect via dapp-kit or Google / X through zkLogin (Enoki)                                                     | web app                                                                                | ⏳ step 7                                         |
+| "Withdraw everything as SUI", with a no-backend fallback                                                       | `emptyVault` (fallback) ✅; operator sell-then-withdraw                                | ⏳ steps 5–6                                      |
 
 ## Decisions taken while building
 
-- **Blast version pinned to the SDK's canonical mainnet source (`52effbc`, launchpad `0x079a1b44…`).** blast-v2-contracts records two Oct 28 stacks; `@interest-protocol/blast-deployments-sdk` 0.1.4 points at this one. `launch::buy` and `launch::sell` have the signatures the SPEC lists.
-- **Blast source is vendored** (`move/vendor/blast`), because its timelock dependency is in a private repo. A signature-only stub replaces it. See that README.
-- **`buy` / `sell` are split into package-only `begin_*` / `finish_*` halves** with a hot-potato ticket, so every limit can be unit-tested. A dependent package can't build a real `Launch` in tests.
-- **Spend is recorded net of Blast's graduation refund**, and per-launch cost drops pro rata on sells and withdrawals.
-- **The agent can pause itself (`pause_by_agent`) but never resume.** SPEC 1b says the agent "pauses itself" when it can't pay the fee. The original design needed the OwnerCap to pause. Letting the TradeCap set `paused` only narrows its power.
-- **Economics thresholds are derived, not hard-coded.** The SPEC's $0.022 alarm is replaced by `costAlarmThresholdUsd` (about $0.0204 today) plus a cache-hit alarm. Output is capped at 600 tokens. `provider.order` is not used (it breaks caching). Details are in [ECONOMICS.md](ECONOMICS.md).
-- **Free days are enforced on-chain** with a `free_days` argument to `create` that sets the initial `last_fee_day`, so no extra field is needed. The fee itself is a separate path from trading: it doesn't count toward `spent_today`.
-- **`sell` takes no `Clock`** and **`high_water_value_hint` is omitted**. Added `withdraw_all_*` and `destroy_trade_cap`. Details are in the Move README.
+- **Blast is pinned to the SDK's canonical mainnet source** (`52effbc`, launchpad `0x079a1b44…`). blast-v2-contracts records two Oct 28 stacks; `@interest-protocol/blast-deployments-sdk` 0.1.4 points at this one. `launch::buy` and `launch::sell` have the signatures the SPEC lists.
+- **Blast source is vendored** (`move/vendor/blast`). Its timelock dependency lives in a private repo, so a signature-only stub replaces it. See that README.
+- **`buy` / `sell` are split into package-only `begin_*` / `finish_*` halves** joined by a hot-potato ticket, so every limit can be unit-tested. A dependent package can't build a real `Launch` in tests.
+- **Spend is recorded net of Blast's graduation refund.** Per-launch cost drops pro rata on sells and withdrawals.
+- **The agent can pause itself (`pause_by_agent`) but never resume.** SPEC 1b has the agent pause itself when it can't pay; letting the TradeCap set `paused` only narrows its power.
+- **Free days are enforced on-chain** through `create(…, free_days)` and the initial `last_fee_day`. No extra field is needed.
+- **Pricing is plan-based and derived from cost** (SPEC rev. 3, owner decision). The fixed $0.99/day, $250 minimum and 30-decision cap are gone. Thresholds come from `pricing.ts` and `economics.ts`, never hard-coded.
+- **The fee cap is 3× the plan price.** Research: a 2× cap binds for about 20% of vaults within six months; 3× for about 5%.
+- **Referral revenue excludes Blast's trade-fee cut** until the MiCA opinion clears it (a switch exists).
+- **No `provider.order` on OpenRouter**: it breaks the sticky routing that caching relies on. Output is capped at 600 tokens.
+- **`sell` takes no `Clock`; `high_water_value_hint` is omitted.** Added `withdraw_all_*` and `destroy_trade_cap`. Details are in the Move README.
 
 ## Open items needing a human
 
-- **Mainnet RPC is blocked in the build environment.** The network policy denies `fullnode.mainnet.sui.io` (proxy 403). Allow that host (or a broader access level) under the cloud environment's Network access settings ([docs](https://code.claude.com/docs/en/cloud-environments#network-access)) to run dev-inspects, the indexer and dry-run ticks from here.
-
-- **Mainnet dev-inspect (step 2).** An unpublished package can't be dev-inspected directly. Options: (a) a local `sui-fork` of mainnet state, publishing the vault there and running `buy` / `sell` against a real launch; or (b) a publish under a throwaway key. Option (b) needs explicit approval because it is a mainnet transaction.
-- The treasury address. Business decisions raised by the economics research (small-vault pricing, 3× cap, referral structure, SPEC §6.1 provider pinning): see [ECONOMICS.md](ECONOMICS.md#decisions-for-mário-and-jose).
-- SPEC §12 decisions: deposit min/max, final preset numbers, UpgradeCap holders and timelock, brand, team-funded arena first.
-- The repository has no license yet (packages are `private`).
+- **Mainnet RPC and OpenRouter are blocked in the build environment** (proxy 403 for `fullnode.mainnet.sui.io`; `openrouter.ai` unreachable). Allow them under the cloud environment's Network access settings ([docs](https://code.claude.com/docs/en/cloud-environments#network-access)). That unblocks the dev-inspect, live model prices (`reconcileCatalog`), the indexer and dry-run ticks.
+- **Mainnet dev-inspect (step 2).** An unpublished package can't be dev-inspected directly. Options: a local `sui-fork` of mainnet state (no signing), or a publish under a throwaway key, which is a mainnet transaction and needs explicit approval.
+- **Pricing decisions still open:** trial as free days or a small credit, referral duration, sharing Blast's trade-fee cut, optional fee-cap tightenings. See [ECONOMICS.md](ECONOMICS.md#decisions-still-open).
+- **Other open decisions:** the treasury address; the SPEC §12 items (maximum deposit, final preset numbers, UpgradeCap holders and timelock, brand, team-funded arena first).
+- **No license yet.** Packages are `private`.
