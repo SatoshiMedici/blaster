@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript:
+    name: TypeScript (lint, typecheck, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  move:
+    name: Move (build, test, custody check)
+    runs-on: ubuntu-latest
+    env:
+      SUI_VERSION: mainnet-v1.77.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Sui CLI
+        id: sui-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.sui-bin
+          key: sui-${{ env.SUI_VERSION }}
+      - name: Install Sui CLI
+        if: steps.sui-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.sui-bin
+          curl -sSfL "https://github.com/MystenLabs/sui/releases/download/${SUI_VERSION}/sui-${SUI_VERSION}-ubuntu-x86_64.tgz" | tar -xz -C ~/.sui-bin sui
+      - run: echo "$HOME/.sui-bin" >> "$GITHUB_PATH"
+      - run: sui --version
+      - name: Cache Move dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.move
+          key: move-${{ hashFiles('move/**/Move.toml') }}
+      - name: Build, unit tests, custody check
+        run: |
+          cd move/blast_agent_vault
+          sui move build --build-env mainnet --lint --warnings-are-errors
+          sui move test --build-env mainnet --lint --warnings-are-errors
+          python3 ../../scripts/check_trade_cap_surface.py sources/vault.move

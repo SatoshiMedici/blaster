@@ -1,0 +1,19 @@
+{
+  "name": "@blast-agents/vault-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript bindings for the blast_agent_vault Move package: PTB builders and state readers.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@blast-agents/shared": "workspace:*",
+    "@interest-protocol/blast-deployments-sdk": "^0.1.4",
+    "@mysten/sui": "^2.26.2"
+  }
+}

@@ -1,0 +1,14 @@
+[package]
+name = "blast_admin"
+edition = "2024"
+license = "BUSL-1.1"
+authors = ["Jose Cerqueira (jose@interestprotocol.com)"]
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "06734f6ff0af45d8632a14a4dc4b100197f6b1a2" }
+blast_fun_timelock = { local = "../timelock_interface" }
+
+[addresses]
+blast_admin = "0x0"
+# Receives the cold SuperAdminCap at publish; init aborts while this is 0x0.
+blast_acl_root = "0x818d6d7026632f82367a9ca2413a5bb28aeec2a1b8dedca919ef812577b4d0a2"

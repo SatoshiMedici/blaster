@@ -1,0 +1,23 @@
+{
+  "name": "blast-agents",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "pnpm -r --parallel typecheck",
+    "test": "pnpm -r test",
+    "move:test": "cd move/blast_agent_vault && sui move test --build-env mainnet --lint --warnings-are-errors && python3 ../../scripts/check_trade_cap_surface.py sources/vault.move",
+    "move:build": "cd move/blast_agent_vault && sui move build --build-env mainnet --lint --warnings-are-errors"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4",
+    "@types/node": "^26.6.6",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0"
+  }
+}

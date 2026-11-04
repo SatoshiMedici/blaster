@@ -1,0 +1,30 @@
+{
+  "name": "@blast-agents/agent-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Market snapshot, model adapters, risk check and executor for Blast trading agents.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run --passWithNoTests",
+    "arena": "tsx src/main.ts",
+    "arena:once": "tsx src/main.ts --once"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
+    "@blast-agents/shared": "workspace:*",
+    "@interest-protocol/blast-deployments-sdk": "^0.1.4",
+    "@interest-protocol/blast-launchpad-sdk": "^0.1.2",
+    "@mysten/sui": "^2.26.2",
+    "dotenv": "^18.0.9",
+    "openai": "^7.49.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "blast_agent_vault"
+edition = "2024"
+license = "UNLICENSED"
+
+[dependencies]
+# Blast launchpad at the canonical mainnet source 52effbc (blast-deployments-sdk
+# CANONICAL_MAINNET_SOURCE; launchpad package 0x079a1b44…a573), vendored under ../vendor/blast
+# because its timelock dependency lives in a private repo. See ../vendor/blast/README.md.
+blast_fun = { local = "../vendor/blast/launchpad" }
+
+[addresses]
+blast_agent_vault = "0x0"

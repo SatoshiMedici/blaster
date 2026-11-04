@@ -1,0 +1,12 @@
+# Interface stub for blast_fun_timelock (github.com/interest-protocol/blast-util-contracts, private).
+# Only the signatures blast_admin and blast_partners use. Bodies abort: this is never published and
+# never executed; on-chain linkage resolves to the real package in Published.toml.
+[package]
+name = "blast_fun_timelock"
+edition = "2024"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "06734f6ff0af45d8632a14a4dc4b100197f6b1a2" }
+
+[addresses]
+blast_fun_timelock = "0x0"
